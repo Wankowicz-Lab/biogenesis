@@ -30,6 +30,7 @@ from topos.structure.secondary_structure import (
     define_soluble_secondary_structure,
     get_secondary_structure_annotations,
 )
+from topos.structure.construct_coverage import build_construct_residue_table
 from topos.structure.structure_context import load_structure
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,7 @@ class Runner:
 
         # Load structure using load_structure function
         logger.info("Loading structure")
-        arr = load_structure(
+        arr, cif_file = load_structure(
             path=config.pdb_path,
             pdb_id=config.pdb_id,
             uniprot_id=config.uniprot_id,
@@ -150,6 +151,14 @@ class Runner:
         # create context object
         logger.info("Creating context object")
         self.context = Context(arr, config=config)
+
+        construct_table, construct_source = build_construct_residue_table(
+            atom_array=self.context.aa,
+            cif_file=cif_file,
+        )
+        self.context.extras["construct_residue_table"] = construct_table
+        self.context.extras["construct_source"] = construct_source
+        logger.info("Construct residue source: %s (%s residues)", construct_source, len(construct_table))
 
         # Validate structural_feature_chains if specified
         if self.context.config.structural_feature_chains is not None:
@@ -227,8 +236,10 @@ class Runner:
             self.context.residue_table, self.context.extras['sequence_alignment_merged'] = merge_mutation_scores(
                 mutation_scores=self.context.extras['mutation_data'],
                 residue_table=self.context.residue_table,
+                construct_table=self.context.extras['construct_residue_table'],
                 chain=self.context.config.mutation_data_chain,
-                alignment_cutoff=self.context.config.alignment_cutoff
+                alignment_cutoff=self.context.config.alignment_cutoff,
+                construct_source=self.context.extras['construct_source'],
             )
 
             md = self.context.extras["mutation_data"]
@@ -239,16 +250,33 @@ class Runner:
             structure_residue_table = self.context.residue_table[structure_residue_cols].drop_duplicates()
             n_chain_residues = int((structure_residue_table["chain"] == chain).sum())
             n_total_residues = structure_residue_table.shape[0]
+            align = self.context.extras["sequence_alignment_merged"]
+            mut_align = align[align["resn_mut"].notna()]
+            n_mut_align = len(mut_align)
+            construct_cov = (
+                mut_align["coverage_status"].isin(["modeled", "unmodeled"]).mean()
+                if n_mut_align
+                else 0.0
+            )
+            coord_cov = (
+                (mut_align["coverage_status"] == "modeled").mean() if n_mut_align else 0.0
+            )
             logger.info(
                 "Using chain %s to map the mutation data onto the structures, out of possible chains %s. "
                 "The mutation data contains %s total residues, and the selected chain represents %s out of %s "
-                "total residues in the structure.",
+                "total residues in the structure. Construct source=%s; construct coverage=%.2f%%; "
+                "coordinate coverage=%.2f%%.",
                 chain,
                 all_chains,
                 n_mutation_residues,
                 n_chain_residues,
                 n_total_residues,
+                self.context.extras["construct_source"],
+                construct_cov * 100,
+                coord_cov * 100,
             )
+            self.context.extras["construct_coverage"] = float(construct_cov)
+            self.context.extras["coordinate_coverage"] = float(coord_cov)
 
             # Sort residue table with mutation_data_chain first
             self.context.residue_table = _sort_residue_table(
@@ -263,6 +291,8 @@ class Runner:
             self.context.residue_table['resi_mut'] = self.context.residue_table['resi_struct']
             self.context.residue_table['mut_info'] = True
             self.context.residue_table['struct_info'] = True
+            self.context.residue_table['modeled'] = True
+            self.context.residue_table['coverage_status'] = 'modeled'
             
             # Add align_pos for consistency (sequential across all chains since no alignment is performed)
             # This ensures all code paths have align_pos, even though it doesn't represent an alignment position
@@ -677,8 +707,10 @@ class Runner:
         self.features.to_csv(merged_path, index=False)
 
         # Save metadata from residue table
-        metadata_cols = (['chain', 'resi_struct', 'resn_struct', 'resi_mut', 'resn_mut', 'struct_info', 'mut_info', 'ss_domains', 'ss_group'] +
+        metadata_cols = (['chain', 'resi_struct', 'resn_struct', 'resi_mut', 'resn_mut', 'struct_info', 'mut_info',
+                          'modeled', 'coverage_status', 'ss_domains', 'ss_group'] +
                          (['resm'] if self.context.config.mutation_data_path is not None else []))
+        metadata_cols = [c for c in metadata_cols if c in self.context.residue_table.columns]
 
         output_df = self.context.residue_table[metadata_cols].drop_duplicates().reset_index(drop=True)
         metadata_path = output_dir / f"{prefix}_metadata.csv"
@@ -706,6 +738,9 @@ class Runner:
             "chains": sorted(self.context.residue_table['chain'].unique().tolist()),
             "n_residues": int(self.context.residue_table['resi_struct'].nunique()),
             "had_hydrogens": self._had_hydrogens,
+            "construct_source": self.context.extras.get("construct_source"),
+            "construct_coverage": self.context.extras.get("construct_coverage"),
+            "coordinate_coverage": self.context.extras.get("coordinate_coverage"),
             "metrics_run": getattr(self, '_metrics_run', []),
             "feature_rows": len(self.features) if hasattr(self, 'features') else 0,
             "feature_columns": len(self.features.columns) if hasattr(self, 'features') else 0,

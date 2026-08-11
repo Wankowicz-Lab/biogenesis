@@ -22,9 +22,9 @@ conda activate topos-py311
 **What it shows**:
 - Downloading a structure by PDB ID
 - Membrane protein handling: PDBTM annotation, membrane orientation, `distance_from_membrane_edge`
-- Aligning DMS data to a specific chain (`mutation_data_chain = "A"`)
+- Aligning DMS data to a specific chain (`mutation_data_chain = "A"`) using the mmCIF polymer construct
 - Full metric set including sequence-level metrics (blosum, aaindex, kidera, effect scores)
-- Expected alignment warnings when the DMS construct differs from the deposited structure
+- Expected alignment warnings when the DMS construct differs from the deposited structure (including unmodeled loops vs construct mismatches)
 
 ```bash
 python examples/B2AR_DMS_example/run_example.py

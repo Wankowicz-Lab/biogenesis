@@ -22,7 +22,7 @@ def test_format_ligand_id():
 
 def test_find_ligands():
     """Test find_ligands identifies ligands when run on PDB 8EFO (requires network)."""
-    arr = load_structure(pdb_id="8EFO")
+    arr = load_structure(pdb_id="8EFO")[0]
     ligands = find_ligands(arr)
     assert len(ligands) >= 1, "8EFO should have at least one ligand identified"
 
@@ -71,7 +71,7 @@ def test_calculate_protein_ligand_interactions(tmp_path):
         config = Config(**tomli.load(f))
     config.pdb_path = mmcif_path
 
-    arr = load_structure(path=mmcif_path, pdb_id="test")
+    arr = load_structure(path=mmcif_path, pdb_id="test")[0]
     if "hetero" not in arr.get_annotation_categories():
         hetero = np.zeros(arr.array_length(), dtype=bool)
         hetero[arr.chain_id == "B"] = True
