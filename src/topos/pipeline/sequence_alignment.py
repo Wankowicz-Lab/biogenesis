@@ -443,10 +443,12 @@ def merge_mutation_scores(
     """
     aligner = PairwiseAligner()
 
+    # Create copies to avoid modifying original DataFrames
     residue_table = residue_table.copy()
     mutation_scores = mutation_scores.copy()
     construct_table = construct_table.copy()
 
+    # Subset construct table to the specified chain (N-to-C polymer / seq_id order)
     construct_chain = (
         construct_table[construct_table["chain"] == chain]
         .sort_values(["seq_id"], kind="mergesort")
@@ -463,6 +465,7 @@ def merge_mutation_scores(
             f"mutation_data_chain '{chain}' not found in construct residue table chains {available}."
         )
 
+    # Subset mutation scores to only the wildtype sequence (N-to-C order, not CSV row order)
     mutation_scores_subset = (
         mutation_scores[["resi", "resn"]]
         .drop_duplicates()
@@ -470,6 +473,7 @@ def merge_mutation_scores(
         .reset_index(drop=True)
     )
 
+    # Prepare sequences for alignment, a single string of single-letter amino acids
     mut_seq_short = mutation_scores_subset["resn"].apply(
         lambda aa: convert_amino_acid_3to1(aa, force_convert=True)
     )
@@ -479,11 +483,15 @@ def merge_mutation_scores(
     )
     construct_seq = "".join(construct_seq_short.tolist())
 
+    # Perform alignment (mutation wildtype → construct polymer / coordinate-fallback sequence)
     logger.info("Performing sequence alignment to construct (source=%s)", construct_source)
     alignment = aligner.align(mut_seq, construct_seq)[0]
+
+    # Create mapping to link dataframes based on alignment
     index_map = alignment_to_index_map(alignment)
 
-    # Align against construct columns only; join coordinate annotations afterward
+    # Merge mutation scores and construct table based on alignment mapping.
+    # Align against construct columns only; join coordinate annotations afterward.
     construct_for_align = construct_chain[["resi", "resn", "seq_id", "modeled", "ins_code"]].copy()
     merged_df = merge_sequence_dfs(
         df1=mutation_scores_subset,
@@ -491,8 +499,10 @@ def merge_mutation_scores(
         mapping=index_map,
     )
 
+    # Evaluate alignment quality
     evaluate_sequence_alignment(merged=merged_df, alignment_cutoff=alignment_cutoff)
 
+    # Add chain information and rename columns
     merged_df["chain"] = chain
     merged_df.rename(
         columns={
@@ -518,25 +528,30 @@ def merge_mutation_scores(
 
     alignment_merged = merged_df.copy()
 
+    # Add mutation information into merged_df
     merged_df = merged_df.merge(
         mutation_scores,
         how="left",
         left_on=["resi_mut", "resn_mut"],
         right_on=["resi", "resn"],
     )
+    # Drop duplicate columns from the merge (resi and resn are duplicates of resi_mut and resn_mut)
     merged_df.drop(columns=["resi", "resn"], inplace=True, errors="ignore")
 
-    # Non-target chains stay coordinate-only; target chain replaced by construct alignment
+    # Remove rows from mutation chain from residue table, update with merged construct-aligned rows.
+    # Non-target chains stay coordinate-only; target chain is replaced by the construct alignment.
     other_chains = residue_table[residue_table["chain"] != chain].copy()
     other_chains.rename(columns={"resn": "resn_struct", "resi": "resi_struct"}, inplace=True)
     other_chains["modeled"] = True
     other_chains["coverage_status"] = pd.NA
     residue_table = pd.concat([other_chains, merged_df], axis=0).reset_index(drop=True)
 
+    # Determine which rows have mutation and structure (coordinate) info
     residue_table["mut_info"] = ~residue_table["resn_mut"].isna()
     # struct_info means coordinates present (not merely in the construct polymer)
     residue_table["struct_info"] = residue_table["modeled"].fillna(False).astype(bool)
 
+    # drop extra columns if present
     keep_cols = [
         "chain",
         "resi_mut",
