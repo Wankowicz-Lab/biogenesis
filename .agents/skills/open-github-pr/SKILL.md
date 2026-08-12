@@ -10,7 +10,15 @@ compatibility: Requires git; `git push` and GitHub API need network. Install Git
 
 1. Follow **[run-tests](../run-tests/SKILL.md)**: scoped tests, then full `pytest` over the project’s test tree with network when needed, until green. Do not open a PR while tests fail locally unless the user explicitly overrides.
 
-2. **Commit** all intended changes (`git status` clean for the work you are including).
+2. **Preserve inline comments** (see [AGENTS.md](../../../AGENTS.md) Documentation). Before committing or pushing, scan the branch diff for removed comment lines and restore any that were dropped during refactors (updated wording is fine; delete only if wrong/obsolete):
+
+```bash
+git diff origin/main...HEAD -- '*.py' | rg '^-[^-].*#' || true
+```
+
+If `origin/main` is unavailable, use `main...HEAD`. Review each hit in context: restore missing comments in the new code, or confirm intentional removal. Do not open the PR until this pass is done.
+
+3. **Commit** all intended changes (`git status` clean for the work you are including).
 
 ## Worktree vs branch
 
@@ -72,6 +80,7 @@ Use `--draft` if the user wants a draft. If `gh` is not installed anywhere, give
 ## Checklist
 
 - [ ] Tests passed per **run-tests** workflow
+- [ ] Removed-comment diff scan done; dropped comments restored or intentionally removed
 - [ ] On a **non-default** branch (unless explicitly PR’ing to default)
 - [ ] Pushed to `origin`
 - [ ] Title + body drafted from the diff; user not blocked on writing copy

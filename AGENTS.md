@@ -32,6 +32,7 @@ These guidelines apply to all code in this repository.
 - Add concise comments for key logic and assumptions, especially around transformations, lookup/indexing strategy, and merge behavior.
 - Comment dense/non-obvious sections frequently enough that intent is clear without reverse-engineering.
 - Explain "why/how", not line-by-line "what".
+- **Preserve existing inline comments when refactoring.** Update wording if behavior changed; delete only if a comment is wrong or obsolete. Rewriting a function is not a reason to drop its comments.
 
 ### Docstrings and inline comments (scope)
 
@@ -41,13 +42,14 @@ The goal is a **high-level summary**: what the unit does, non-obvious behavior, 
 - **Config / field descriptions:** Prefer a **short phrase** (“Path to amino acid index database”) over duplicating full schemas next to each field. Detailed layout belongs in the README’s parameter or data sections.
 - **Comments:** Use them where the code is not self-explanatory (indexing strategy, merge keys, invariants). Do not add comments that only repeat names already in the code or that duplicate README tables.
 
-**Edits to existing functions:** Extra verbosity shows up most often here. When you change behavior, **do not** treat the docstring as the place for a full restatement of inputs/outputs or file formats “because the function changed.” Update the **minimal** text needed so the summary stays accurate; move exhaustive detail to README or keep it in code via clear names and constants. **Preserve existing inline comments** when refactoring; update their wording if behavior changed—do not delete them unless they are wrong.
+**Edits to existing functions:** Extra verbosity shows up most often here. When you change behavior, **do not** treat the docstring as the place for a full restatement of inputs/outputs or file formats “because the function changed.” Update the **minimal** text needed so the summary stays accurate; move exhaustive detail to README or keep it in code via clear names and constants.
 
 **Anti-patterns:**
 
 - Long “Expects `context[...]` to be a DataFrame whose columns are …” blocks in docstrings when the README or a module constant already defines the format.
 - Copying README tables or config field lists into docstrings or `Config` field help text.
 - Comments that narrate every line of a straightforward loop.
+- Silently dropping inline comments while rewriting or relocating a function (even if the new code “reads clearly”).
 
 ## When to break the rules
 
