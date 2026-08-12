@@ -357,13 +357,14 @@ def evaluate_sequence_alignment(merged: pd.DataFrame, alignment_cutoff: float) -
     n_mut = int(mut_only.sum())
     if n_mut:
         aa_match = has_mut & has_construct & (merged["resn_df1"] == merged["resn_df2"])
+        has_coords = has_mut & has_construct & merged["modeled"].fillna(False).astype(bool)
         construct_cov = float(aa_match.sum() / n_mut)
-        coord_cov = float((aa_match & merged["modeled"].fillna(False).astype(bool)).sum() / n_mut)
+        coord_cov = float(has_coords.sum() / n_mut)
         warnings.warn(
             f"Construct coverage: {construct_cov * 100:.2f}% of mutation wildtype positions "
             f"match the construct sequence ({int(aa_match.sum())}/{n_mut}). "
-            f"Coordinate coverage: {coord_cov * 100:.2f}% have deposited coordinates "
-            f"({int((aa_match & merged['modeled'].fillna(False).astype(bool)).sum())}/{n_mut})."
+            f"Coordinate coverage: {coord_cov * 100:.2f}% align to a construct residue with "
+            f"deposited coordinates ({int(has_coords.sum())}/{n_mut})."
         )
 
     if mismatches := int(mismatch_mask.sum()):

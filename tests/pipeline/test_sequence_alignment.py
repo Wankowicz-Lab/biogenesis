@@ -325,6 +325,26 @@ def test_evaluate_sequence_alignment():
         assert any("Found gaps at the termini of the sequence alignment" in m for m in messages)
 
 
+def test_evaluate_coordinate_coverage_includes_modeled_mismatches():
+    """Coordinate coverage counts aligned construct residues with coords, even on AA mismatch."""
+    merged = pd.DataFrame({
+        "resn_df1": ["A", "R", "N", "D"],
+        "resi_df1": [1, 2, 3, 4],
+        "resn_df2": ["A", "K", "N", None],
+        "resi_df2": [10, 11, 12, None],
+        "modeled": [True, True, False, False],
+    })
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        evaluate_sequence_alignment(merged=merged, alignment_cutoff=0.5)
+        coverage_msgs = [str(x.message) for x in w if "Coordinate coverage" in str(x.message)]
+        assert len(coverage_msgs) == 1
+        # 2/4 have construct+coords (match at 1 and mismatch at 2); construct match is 2/4 (1 and 3)
+        assert "Coordinate coverage: 50.00%" in coverage_msgs[0]
+        assert "Construct coverage: 50.00%" in coverage_msgs[0]
+        assert "(2/4)" in coverage_msgs[0]
+
+
 def _construct_from_residue_table(residue_table: pd.DataFrame) -> pd.DataFrame:
     """Coordinates-as-construct table for unit tests."""
     df = residue_table[["chain", "resi", "resn"]].copy()

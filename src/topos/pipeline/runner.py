@@ -152,14 +152,6 @@ class Runner:
         logger.info("Creating context object")
         self.context = Context(arr, config=config)
 
-        construct_table, construct_source = build_construct_residue_table(
-            atom_array=self.context.aa,
-            cif_file=cif_file,
-        )
-        self.context.extras["construct_residue_table"] = construct_table
-        self.context.extras["construct_source"] = construct_source
-        logger.info("Construct residue source: %s (%s residues)", construct_source, len(construct_table))
-
         # Validate structural_feature_chains if specified
         if self.context.config.structural_feature_chains is not None:
             if len(self.context.config.structural_feature_chains) == 0:
@@ -220,6 +212,19 @@ class Runner:
         if self.context.config.mutation_data_path is not None:
             logger.info("Loading mutation data")
 
+            # Construct table is only needed for DMS alignment / coverage QC
+            construct_table, construct_source = build_construct_residue_table(
+                atom_array=self.context.aa,
+                cif_file=cif_file,
+            )
+            self.context.extras["construct_residue_table"] = construct_table
+            self.context.extras["construct_source"] = construct_source
+            logger.info(
+                "Construct residue source: %s (%s residues)",
+                construct_source,
+                len(construct_table),
+            )
+
             self.context.extras['mutation_data'] = load_mutation_scores(
                 path=self.context.config.mutation_data_path,
                 residue_col_name=self.context.config.mutation_residue_col_name,
@@ -258,8 +263,11 @@ class Runner:
                 if n_mut_align
                 else 0.0
             )
+            # Coordinate coverage: aligned construct residue has coordinates (AA match not required)
             coord_cov = (
-                (mut_align["coverage_status"] == "modeled").mean() if n_mut_align else 0.0
+                (mut_align["resn_struct"].notna() & mut_align["modeled"].fillna(False).astype(bool)).mean()
+                if n_mut_align
+                else 0.0
             )
             logger.info(
                 "Using chain %s to map the mutation data onto the structures, out of possible chains %s. "
