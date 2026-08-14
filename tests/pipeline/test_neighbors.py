@@ -125,6 +125,7 @@ def test_calculate_neighborhood_features_neighbor_averages_deterministic():
         "chain": ["A", "A", "A", "A", "A"],
         "resi_struct": [1, 2, 2, 3, 4],
         "resn_struct": ["ALA", "VAL", "VAL", "GLY", "SER"],
+        "struct_info": True,
         "sasa": [1.0, 5.0, 7.0, 3.0, 10.0],
         "kyte_doolittle": [2.0, 4.0, 10.0, 6.0, 8.0],
     })
@@ -157,6 +158,7 @@ def test_average_neighbor_metrics_raises_on_non_numeric_pool_column():
             "chain": ["A"],
             "resi_struct": [1],
             "resn_struct": ["ALA"],
+            "struct_info": True,
             "sasa": [100.0],
             "unvalidated_new_metric": ["not_numeric"],
         }
@@ -175,6 +177,7 @@ def test_calculate_neighborhood_features_chain_neighbor_counts_deterministic():
         "chain": ["A", "A", "A", "B", "B", "B"],
         "resi_struct": [1, 2, 3, 1, 2, 2],
         "resn_struct": ["ALA", "VAL", "LEU", "GLY", "SER", "SER"],
+        "struct_info": True,
         "sasa": [1.0, 2.0, 5.0, 3.0, 4.0, 8.0],
     })
     neighbor_map = {
@@ -208,6 +211,7 @@ def test_neighbor_entropy_metrics_filters_missing_and_nonstandard_neighbors():
         "chain": ["A", "A", "A"],
         "resi_struct": [1, 2, 3],
         "resn_struct": ["ALA", "VAL", "MSE"],
+        "struct_info": True,
         "sasa": [1.0, 2.0, 3.0],
     })
     neighbor_map = {
@@ -241,6 +245,7 @@ def test_calculate_neighborhood_features_secondary_structure_coarse_granular_met
             "ALA", "VAL", "LEU", "ILE", "TYR", "PHE",
             "THR", "SER", "GLY", "PRO", "ASN", "GLN",
         ],
+        "struct_info": True,
         "sasa": [float(i) for i in range(12)],
     })
     residue_table = features.copy()
@@ -331,6 +336,7 @@ def test_calculate_neighborhood_features_secondary_structure_coarse_granular_met
         "chain": ["A"] * 6,
         "resi_struct": [1, 2, 3, 4, 5, 6],
         "resn_struct": ["ALA", "VAL", "GLY", "SER", "THR", "ASN"],
+        "struct_info": True,
         "sasa": [1.0, 2.0, 3.0, 4.0, 5.0, 6.0],
     })
     residue_table = features.copy()
@@ -384,6 +390,7 @@ def test_neighbor_sequence_range_metrics_same_chain_and_threshold():
         "chain": ["A", "A", "A", "A", "A", "B"],
         "resi_struct": [15, 27, 28, 40, 30, 100],
         "resn_struct": ["ALA", "VAL", "GLY", "SER", "LEU", "THR"],
+        "struct_info": True,
     })
     neighbor_map = {
         "A:15:ALA": ["A:27:VAL", "A:28:GLY", "A:40:SER", "B:100:THR"],
@@ -421,6 +428,7 @@ def test_neighbor_sequence_range_metrics_warns_when_same_chain_neighbors_missing
         "chain": ["A", "B"],
         "resi_struct": [10, 50],
         "resn_struct": ["ALA", "GLY"],
+        "struct_info": True,
     })
     neighbor_map = {
         "A:10:ALA": ["B:50:GLY"],
@@ -437,3 +445,28 @@ def test_neighbor_sequence_range_metrics_warns_when_same_chain_neighbors_missing
     result = result.set_index(["chain", "resi_struct", "resn_struct"])
     assert pd.isna(result.loc[("A", 10, "ALA"), "prop_long_range_neighbors"])
     assert pd.isna(result.loc[("A", 10, "ALA"), "mean_neighbor_sequence_distance"])
+
+
+def test_neighborhood_metrics_exclude_unmodeled_construct_residues():
+    """Residues with resi_struct but struct_info=False are omitted from neighborhood outputs."""
+
+    class DummyContext:
+        def __init__(self, neighbor_map):
+            self.extras = {"residue_neighbors": neighbor_map}
+
+    features = pd.DataFrame({
+        "chain": ["A", "A"],
+        "resi_struct": [1, 2],
+        "resn_struct": ["ALA", "VAL"],
+        "struct_info": [True, False],
+        "sasa": [1.0, 9.0],
+    })
+    neighbor_map = {
+        "A:1:ALA": ["A:2:VAL"],
+        "A:2:VAL": ["A:1:ALA"],
+    }
+    result = calculate_neighborhood_features(DummyContext(neighbor_map), features)
+    assert list(result["resi_struct"]) == [1]
+    assert "A:2:VAL" not in {
+        f"{c}:{r}:{n}" for c, r, n in zip(result["chain"], result["resi_struct"], result["resn_struct"])
+    }

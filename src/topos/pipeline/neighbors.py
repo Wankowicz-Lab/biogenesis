@@ -74,7 +74,12 @@ def calculate_neighborhood_features(
 ) -> pd.DataFrame:
     """Run registered neighborhood metric functions and merge their outputs."""
     merge_cols = ["chain", "resi_struct", "resn_struct"]
-    base = features[merge_cols].drop_duplicates().reset_index(drop=True)
+    # struct_info means coordinates present (not merely numbered in the construct)
+    base = (
+        features.loc[features["struct_info"], merge_cols]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
 
     for func in NEIGHBORHOOD_METRIC_FUNCTIONS:
         df = func(context, features)

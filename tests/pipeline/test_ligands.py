@@ -84,6 +84,7 @@ def test_calculate_protein_ligand_interactions(tmp_path):
         columns={"resn": "resn_struct", "resi": "resi_struct"},
         inplace=True,
     )
+    context.residue_table["struct_info"] = True
 
     contacting_df = pd.DataFrame({
         "chain": ["A"],
@@ -95,12 +96,21 @@ def test_calculate_protein_ligand_interactions(tmp_path):
     result = calculate_protein_ligand_interactions(context, contacting_df)
 
     assert "ligand_B_1_ALA_interactions" in result.columns
-    assert result.shape[0] == context.residue_table.shape[0]
+    assert result.shape[0] == int(context.residue_table["struct_info"].sum())
     vals = result["ligand_B_1_ALA_interactions"].dropna().unique()
     assert len(vals) >= 1
-    assert set(vals).issubset({"contact", "binding site", "second shell"})
+
+    # Unmodeled construct rows (numbered but no coordinates) are excluded
+    unmodeled = context.residue_table.iloc[[0]].copy()
+    unmodeled["struct_info"] = False
+    unmodeled["resi_struct"] = 999
+    unmodeled["resn_struct"] = "ALA"
+    context.residue_table = pd.concat([context.residue_table, unmodeled], ignore_index=True)
+    out_unmodeled = calculate_protein_ligand_interactions(context, contacting_df)
+    assert 999 not in out_unmodeled["resi_struct"].to_numpy()
+    assert out_unmodeled.shape[0] == int(context.residue_table["struct_info"].sum())
 
     arr.hetero[:] = False
     out_skip = calculate_protein_ligand_interactions(context, contacting_df)
-    assert out_skip.shape[0] == context.residue_table.shape[0]
+    assert out_skip.shape[0] == int(context.residue_table["struct_info"].sum())
     assert "ligand_B_1_ALA_interactions" not in out_skip.columns

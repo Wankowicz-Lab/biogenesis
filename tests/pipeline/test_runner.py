@@ -618,6 +618,7 @@ def test_runner_run_metric(tmp_path):
             'resm',
             'type',
             'name',
+            'struct_info',
         ]
         if 'ss_group' in myrunner.context.residue_table.columns:
             expected_cols.append('ss_group')

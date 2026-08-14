@@ -56,8 +56,8 @@ def count_chain_neighbors(
     neighbor_map = context.extras["residue_neighbors"]
     struct_cols = ["chain", "resi_struct", "resn_struct"]
 
-    unique = features[struct_cols].drop_duplicates()
-    unique = unique.loc[unique.resi_struct.notna(), :]
+    # struct_info means coordinates present (not merely numbered in the construct)
+    unique = features.loc[features["struct_info"], struct_cols].drop_duplicates()
 
     key_to_chain = dict(
         zip(
@@ -118,7 +118,7 @@ def average_neighbor_metrics(
     # Collapse mutation-level rows to one residue-level row by averaging each metric per residue.
     selection_cols = STRUCT_COLS + present_metrics + (["type"] if "type" in features.columns else [])
     residue_level = features.loc[
-        features["resi_struct"].notna(),
+        features["struct_info"],
         selection_cols,
     ].copy()
 
@@ -182,9 +182,12 @@ def _shannon_entropy(labels: list[str]) -> float:
 
 
 def _unique_residues(features: pd.DataFrame) -> pd.DataFrame:
-    """Collapse a feature table to one row per structural residue."""
-    unique = features[STRUCT_COLS].drop_duplicates()
-    return unique.loc[unique["resi_struct"].notna(), :].reset_index(drop=True)
+    """Collapse a feature table to one row per residue with coordinates."""
+    return (
+        features.loc[features["struct_info"], STRUCT_COLS]
+        .drop_duplicates()
+        .reset_index(drop=True)
+    )
 
 
 def _residue_key_lookup(df: pd.DataFrame, value_col: str) -> dict[str, str]:
@@ -222,14 +225,15 @@ def _residue_secondary_structure_granular_lookup(
 ) -> dict[str, object]:
     """Build a residue-key lookup for ss_domains when annotations are available."""
     if "ss_domains" in features.columns:
-        ss_lookup = features[STRUCT_COLS + ["ss_domains"]].drop_duplicates(STRUCT_COLS)
+        src = features.loc[features["struct_info"]]
+        ss_lookup = src[STRUCT_COLS + ["ss_domains"]].drop_duplicates(STRUCT_COLS)
     elif hasattr(context, "residue_table") and "ss_domains" in context.residue_table.columns:
-        ss_lookup = context.residue_table[STRUCT_COLS + ["ss_domains"]].drop_duplicates(STRUCT_COLS)
+        src = context.residue_table.loc[context.residue_table["struct_info"]]
+        ss_lookup = src[STRUCT_COLS + ["ss_domains"]].drop_duplicates(STRUCT_COLS)
     else:
         return {}
 
-    ss_lookup = ss_lookup.loc[ss_lookup["resi_struct"].notna(), :].reset_index(drop=True)
-    return _residue_key_lookup(ss_lookup, "ss_domains")
+    return _residue_key_lookup(ss_lookup.reset_index(drop=True), "ss_domains")
 
 
 def _parse_residue_key(residue_key: str) -> tuple[str, int, str]:

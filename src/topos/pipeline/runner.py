@@ -442,6 +442,7 @@ class Runner:
             'type',
             'ss_group',
             'align_pos',
+            'struct_info',
         ]
         keep_cols = [col for col in potential_cols if col in self.context.residue_table.columns]
 
