@@ -491,6 +491,11 @@ def test_merge_mutation_scores_unmodeled_and_mismatch():
     unmodeled_rows = merged_df[(merged_df['resi_mut'] == 3) & merged_df['mut_info']]
     assert not unmodeled_rows['struct_info'].any()
     assert (unmodeled_rows['coverage_status'] == 'unmodeled').all()
+    assert (unmodeled_rows['ss_domains'] == 'unmodeled').all()
+    assert (unmodeled_rows['ss_group'] == 'unmodeled').all()
+    # Modeled rows keep coordinate SS labels
+    modeled_rows = merged_df[(merged_df['resi_mut'] == 1) & merged_df['mut_info']]
+    assert (modeled_rows['ss_domains'] == 'helix_1').all()
 
 
 def test_merge_mutation_scores_missing_scheme_chain_raises():

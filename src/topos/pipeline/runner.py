@@ -441,6 +441,7 @@ class Runner:
             'resn_mut',
             'type',
             'ss_group',
+            'ss_domains',
             'align_pos',
             'struct_info',
         ]

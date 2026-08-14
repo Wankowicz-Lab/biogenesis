@@ -322,6 +322,7 @@ def test_secondary_structure_coarse_from_label_pdbtm_allowlist():
     assert _secondary_structure_coarse_from_label("TMD_3") == "alpha-helix"
     assert _secondary_structure_coarse_from_label("cytoplasmic_loop_1") is None
     assert _secondary_structure_coarse_from_label("not_a_real_label") is None
+    assert _secondary_structure_coarse_from_label("unmodeled") is None
 
 
 def test_calculate_neighborhood_features_secondary_structure_coarse_granular_metrics_membrane_mapping():

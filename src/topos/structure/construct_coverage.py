@@ -21,6 +21,8 @@ logger = logging.getLogger(__name__)
 
 CONSTRUCT_SOURCE_POLYMER = "polymer_scheme"
 CONSTRUCT_SOURCE_COORDINATES = "coordinates"
+# Catalog SS label for construct residues without coordinates (not a real domain)
+UNMODELED_SS_LABEL = "unmodeled"
 
 _MISSING = frozenset({"?", ".", ""})
 

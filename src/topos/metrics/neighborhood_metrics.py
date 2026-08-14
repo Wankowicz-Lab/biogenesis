@@ -21,6 +21,7 @@ from topos.metrics.averaging_metrics import (
 )
 from topos.metrics.secondary_structure import AA_TO_GROUP
 from topos.pipeline.context import Context
+from topos.structure.construct_coverage import UNMODELED_SS_LABEL
 from topos.structure.utils import res_key
 
 STRUCT_COLS = ["chain", "resi_struct", "resn_struct"]
@@ -206,6 +207,10 @@ def _secondary_structure_coarse_from_label(secondary_structure_granular: object)
         return None
 
     label = str(secondary_structure_granular)
+    # Catalog label for missing coordinates — not a secondary-structure class
+    if label == UNMODELED_SS_LABEL:
+        return None
+
     if label.startswith("alpha-helix_") or label.startswith("TMD_"):
         return "alpha-helix"
     if label.startswith("beta-sheet_"):

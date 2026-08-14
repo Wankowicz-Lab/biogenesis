@@ -22,6 +22,7 @@ from topos.sequence.utils import (
     convert_amino_acid_3to1,
     invalid_codes,
 )
+from topos.structure.construct_coverage import UNMODELED_SS_LABEL
 
 logger = logging.getLogger(__name__)
 
@@ -525,6 +526,14 @@ def merge_mutation_scores(
             .rename(columns={"resi": "resi_struct", "resn": "resn_struct"})
         )
         merged_df = merged_df.merge(coord_annot, how="left", on=["resi_struct", "resn_struct"])
+
+    # Unmodeled construct residues have no DSSP assignment; label both SS columns explicitly.
+    # Aggregation metrics exclude this label (see secondary_structure_features).
+    unmodeled_mask = merged_df["modeled"].eq(False)
+    for col in ("ss_domains", "ss_group"):
+        if col not in merged_df.columns:
+            merged_df[col] = pd.NA
+        merged_df.loc[unmodeled_mask, col] = UNMODELED_SS_LABEL
 
     alignment_merged = merged_df.copy()
 
