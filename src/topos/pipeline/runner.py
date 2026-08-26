@@ -33,8 +33,8 @@ from topos.structure.secondary_structure import (
 from topos.structure.construct_coverage import build_construct_residue_table
 from topos.structure.structure_context import (
     STRUCTURE_FEATURE_KEY_COLS,
+    drop_duplicate_residue_keys,
     load_structure,
-    warn_if_duplicate_residue_keys,
 )
 
 logger = logging.getLogger(__name__)
@@ -460,12 +460,11 @@ class Runner:
         scaffold_key_cols = [c for c in STRUCTURE_FEATURE_KEY_COLS if c in keep_cols]
         if "resm" in keep_cols:
             scaffold_key_cols.append("resm")
-        warn_if_duplicate_residue_keys(
+        merged_df = drop_duplicate_residue_keys(
             self.context.residue_table[keep_cols],
             scaffold_key_cols,
             context="_merge_features residue_table scaffold",
         )
-        merged_df = self.context.residue_table[keep_cols].drop_duplicates().reset_index(drop=True)
 
         # Filter merged_df to only include structural_feature_chains if specified
         # This ensures the final output only contains the specified chains, even though
@@ -487,7 +486,7 @@ class Runner:
             elif 'resi_struct' in df.columns:
                 merge_cols.extend(['resi_struct', 'resn_struct'])
 
-            warn_if_duplicate_residue_keys(
+            df = drop_duplicate_residue_keys(
                 df,
                 merge_cols,
                 context=f"_merge_features metric frame {i}",

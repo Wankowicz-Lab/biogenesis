@@ -31,38 +31,53 @@ STRUCTURE_RESIDUE_KEY_COLS = ("chain", "resi", "resn")
 STRUCTURE_FEATURE_KEY_COLS = ("chain", "resi_struct", "resn_struct")
 
 
-def warn_if_duplicate_residue_keys(
+def drop_duplicate_residue_keys(
     df: pd.DataFrame,
     key_cols: Sequence[str],
     *,
     context: str,
-) -> None:
-    """Warn when ``key_cols`` are non-unique (does not drop rows).
+) -> pd.DataFrame:
+    """Warn and drop rows when ``key_cols`` are non-unique (``keep='last'``).
 
     Duplicate keys often come from PDB insertion codes that share ``resi``/``resn``
-    within a chain. Silent deduplication would discard real residues; warn instead.
+    within a chain and would otherwise cause many-to-many feature merges.
+
+    Only rows with non-null values in every ``key_cols`` entry are considered;
+    mutation-only scaffold rows that share a null ``resi_struct`` are left intact.
+    ``keep='last'`` matches packing / H-bond metrics that write colliding keys onto
+    the last residue-start row.
 
     Callers that pass a mutation-expanded scaffold should include ``resm`` in
     ``key_cols`` so one-row-per-substitution expansions are not treated as collisions.
     """
     cols = list(key_cols)
     if df.empty or any(c not in df.columns for c in cols):
-        return
+        return df
 
-    dup_mask = df.duplicated(subset=cols, keep=False)
-    if not dup_mask.any():
-        return
+    # Incomplete keys (e.g. NaN resi_struct on mutation-only rows) are not insertion-code
+    # collisions; pandas would otherwise treat all nulls as equal and over-collapse.
+    complete_mask = df[cols].notna().all(axis=1)
+    if not complete_mask.any():
+        return df
 
-    n_rows = len(df)
-    n_unique = int(df.drop_duplicates(subset=cols).shape[0])
-    examples = df.loc[dup_mask, cols].drop_duplicates().head(5)
+    complete = df.loc[complete_mask]
+    dup_mask_complete = complete.duplicated(subset=cols, keep=False)
+    if not dup_mask_complete.any():
+        return df
+
+    n_rows = int(dup_mask_complete.sum())
+    n_unique = int(complete.loc[dup_mask_complete].drop_duplicates(subset=cols).shape[0])
+    examples = complete.loc[dup_mask_complete, cols].drop_duplicates().head(5)
     warnings.warn(
         f"Duplicate residue keys in {context}: {n_rows} rows map to {n_unique} unique "
-        f"keys on {cols}. This can cause many-to-many feature merges (e.g. PDB "
-        f"insertion codes). Example keys:\n{examples.to_string(index=False)}",
+        f"keys on {cols}. Dropping duplicates (keep='last'). This can indicate PDB "
+        f"insertion codes. Example keys:\n{examples.to_string(index=False)}",
         UserWarning,
         stacklevel=2,
     )
+    # Drop earlier complete duplicates; keep incomplete-key rows and the last of each key.
+    drop_idx = complete.index[complete.duplicated(subset=cols, keep="last")]
+    return df.drop(index=drop_idx).reset_index(drop=True)
 
 
 def residue_table(array: struc.AtomArray) -> pd.DataFrame:
@@ -86,12 +101,11 @@ def residue_table(array: struc.AtomArray) -> pd.DataFrame:
     altloc = array.altloc[res_starts]
 
     table = pd.DataFrame({"chain": chains, "resi": resi, "resn": resn, "altloc": altloc})
-    warn_if_duplicate_residue_keys(
+    return drop_duplicate_residue_keys(
         table,
         STRUCTURE_RESIDUE_KEY_COLS,
         context="residue_table creation",
     )
-    return table
 
 
 def load_structure(
