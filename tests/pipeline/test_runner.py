@@ -456,6 +456,88 @@ def test_runner__merge_features(tmp_path):
     assert merged_df.loc[~df3_mask, 'feature3'].isnull().all()
 
 
+def test_runner__merge_features_warns_on_duplicate_metric_keys(tmp_path):
+    """Metric frames with duplicate structure keys should warn, not silently dedupe."""
+    myrunner = runner.Runner(
+        pdb_id='8smv',
+        name='test_merge_dup_keys',
+        membrane_protein=False,
+        mutation_data_path=None,
+        output_dir=tmp_path,
+    )
+
+    residue_table = _make_residue_table(num_residues=3, num_chains=1, start_resis=[1], make_muts=False)
+    metric = pd.DataFrame({
+        'chain': ['A', 'A'],
+        'resi_struct': [1, 1],
+        'resn_struct': [residue_table.loc[0, 'resn_struct'], residue_table.loc[0, 'resn_struct']],
+        'feature1': [0.1, 0.2],
+    })
+
+    class MockConfig:
+        structural_feature_chains = None
+        mutation_data_chain = None
+
+    class MockContext:
+        def __init__(self, residue_table):
+            self.residue_table = residue_table
+            self.config = MockConfig()
+
+    myrunner.context = MockContext(residue_table=residue_table)
+
+    with pytest.warns(UserWarning, match=r"_merge_features metric frame 0"):
+        merged = myrunner._merge_features([metric], mutations=False)
+
+    # Warning only: merge still proceeds (and may expand rows).
+    assert 'feature1' in merged.columns
+
+
+def test_runner__merge_features_scaffold_allows_multi_resm(tmp_path):
+    """One scaffold row per resm is expected; do not warn as insertion-code collision."""
+    import warnings
+
+    myrunner = runner.Runner(
+        pdb_id='8smv',
+        name='test_merge_multi_resm',
+        membrane_protein=False,
+        mutation_data_path=None,
+        output_dir=tmp_path,
+    )
+
+    residue_table = _make_residue_table(num_residues=3, num_chains=1, start_resis=[1], make_muts=True)
+    # Sanity: DMS-style expansion has repeated structure keys across resm.
+    assert residue_table.duplicated(subset=['chain', 'resi_struct', 'resn_struct']).any()
+    assert not residue_table.duplicated(
+        subset=['chain', 'resi_struct', 'resn_struct', 'resm']
+    ).any()
+
+    metric = residue_table[['chain', 'resi_struct', 'resn_struct']].drop_duplicates().copy()
+    metric['feature1'] = 1.0
+
+    class MockConfig:
+        structural_feature_chains = None
+        mutation_data_chain = 'A'
+
+    class MockContext:
+        def __init__(self, residue_table):
+            self.residue_table = residue_table
+            self.config = MockConfig()
+
+    myrunner.context = MockContext(residue_table=residue_table)
+
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter('always')
+        merged = myrunner._merge_features([metric], mutations=True)
+
+    scaffold_warnings = [
+        w for w in recorded
+        if issubclass(w.category, UserWarning)
+        and '_merge_features residue_table scaffold' in str(w.message)
+    ]
+    assert scaffold_warnings == []
+    assert len(merged) == len(residue_table.drop_duplicates())
+
+
 def test_runner__merge_features_with_muts(tmp_path):
     pdb_id = '8smv'
 

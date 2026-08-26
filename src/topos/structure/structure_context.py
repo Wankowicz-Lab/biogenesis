@@ -7,9 +7,10 @@ including structure file loading, residue table creation, and alternate location
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 from tempfile import NamedTemporaryFile, gettempdir
-from typing import Literal, Optional, Tuple, Union
+from typing import Literal, Optional, Sequence, Tuple, Union
 
 import biotite.structure as struc
 import numpy as np
@@ -22,6 +23,46 @@ from biotite.structure.io.pdbx import CIFFile, get_structure
 logger = logging.getLogger(__name__)
 
 ALPHAFOLD_API_BASE = "https://alphafold.ebi.ac.uk/api/prediction"
+
+# Keys used for structure-side residue identity in tables and feature merges.
+# PDB insertion codes are not included, so antibody CDR insertions (e.g. 100A vs 100E)
+# can collide on these columns and cause many-to-many joins downstream.
+STRUCTURE_RESIDUE_KEY_COLS = ("chain", "resi", "resn")
+STRUCTURE_FEATURE_KEY_COLS = ("chain", "resi_struct", "resn_struct")
+
+
+def warn_if_duplicate_residue_keys(
+    df: pd.DataFrame,
+    key_cols: Sequence[str],
+    *,
+    context: str,
+) -> None:
+    """Warn when ``key_cols`` are non-unique (does not drop rows).
+
+    Duplicate keys often come from PDB insertion codes that share ``resi``/``resn``
+    within a chain. Silent deduplication would discard real residues; warn instead.
+
+    Callers that pass a mutation-expanded scaffold should include ``resm`` in
+    ``key_cols`` so one-row-per-substitution expansions are not treated as collisions.
+    """
+    cols = list(key_cols)
+    if df.empty or any(c not in df.columns for c in cols):
+        return
+
+    dup_mask = df.duplicated(subset=cols, keep=False)
+    if not dup_mask.any():
+        return
+
+    n_rows = len(df)
+    n_unique = int(df.drop_duplicates(subset=cols).shape[0])
+    examples = df.loc[dup_mask, cols].drop_duplicates().head(5)
+    warnings.warn(
+        f"Duplicate residue keys in {context}: {n_rows} rows map to {n_unique} unique "
+        f"keys on {cols}. This can cause many-to-many feature merges (e.g. PDB "
+        f"insertion codes). Example keys:\n{examples.to_string(index=False)}",
+        UserWarning,
+        stacklevel=2,
+    )
 
 
 def residue_table(array: struc.AtomArray) -> pd.DataFrame:
@@ -43,8 +84,14 @@ def residue_table(array: struc.AtomArray) -> pd.DataFrame:
     resi   = array.res_id[res_starts]
     resn   = array.res_name[res_starts]
     altloc = array.altloc[res_starts]
-    
-    return pd.DataFrame({"chain": chains, "resi": resi, "resn": resn, "altloc": altloc})
+
+    table = pd.DataFrame({"chain": chains, "resi": resi, "resn": resn, "altloc": altloc})
+    warn_if_duplicate_residue_keys(
+        table,
+        STRUCTURE_RESIDUE_KEY_COLS,
+        context="residue_table creation",
+    )
+    return table
 
 
 def load_structure(
