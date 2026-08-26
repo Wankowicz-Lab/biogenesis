@@ -21,6 +21,7 @@ NON_METRIC_COLUMNS: frozenset[str] = frozenset(
         "struct_info",
         "mut_info",
         "ss_domains",
+        "ss_category",
     }
 )
 

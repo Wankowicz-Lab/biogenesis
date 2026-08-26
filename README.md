@@ -247,6 +247,7 @@ Residue-level structural annotation table:
 | `modeled` | `True` if coordinates are present for this construct residue |
 | `coverage_status` | DMS coverage class: `modeled`, `unmodeled`, `missing_from_construct`, `construct_mismatch` (NaN if no mutation residue on the row) |
 | `ss_domains` | Secondary structure domain label (e.g. `helix_1`, `coil_3`); `unmodeled` for construct residues without coordinates (excluded from SS-domain aggregations) |
+| `ss_category` | Domain category with unique index stripped (e.g. `TMD`, `side1`, `alpha-helix`); `unmodeled` when coordinates are absent |
 | `ss_group` | Secondary structure class (`helix`, `sheet`, `coil`); `unmodeled` when coordinates are absent |
 | `resm` | Mutant residue (only present when DMS data provided) |
 
@@ -320,6 +321,7 @@ It records:
 | `resm` | Mutant residue token after loading, typically 3-letter for substitutions and unchanged for explicit indel shorthand tokens |
 | `name` | Run name (derived from PDB ID or the `name` parameter) |
 | `ss_domains` | Secondary structure domain label (e.g. `helix_1`, `sheet_2`, `coil_3`); `unmodeled` when coordinates are absent (excluded from SS-domain aggregations) |
+| `ss_category` | Domain category with unique index stripped (e.g. `TMD`, `side1`, `alpha-helix`); `unmodeled` when coordinates are absent |
 | `ss_group` | Secondary structure class; `unmodeled` when coordinates are absent |
 
 ### Structural metrics

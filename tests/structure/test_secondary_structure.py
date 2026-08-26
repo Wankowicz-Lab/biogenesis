@@ -8,6 +8,7 @@ from topos.structure.secondary_structure import (
     define_soluble_secondary_structure,
     get_secondary_structure_annotations,
     make_contiguous_group_labels,
+    ss_domains_to_category,
 )
 from tests.test_utils import AA_LIST, _make_chain, _make_residue_table
 
@@ -89,6 +90,17 @@ def test_get_secondary_structure_annotations_unknown_backend():
         get_secondary_structure_annotations(context)
 
 
+def test_ss_domains_to_category():
+    labels = pd.Series(["TMD_1", "side1_2", "alpha-helix_3", "unmodeled", pd.NA, "coil_10"])
+    out = ss_domains_to_category(labels)
+    assert out.iloc[0] == "TMD"
+    assert out.iloc[1] == "side1"
+    assert out.iloc[2] == "alpha-helix"
+    assert out.iloc[3] == "unmodeled"
+    assert pd.isna(out.iloc[4])
+    assert out.iloc[5] == "coil"
+
+
 def test_define_membrane_secondary_structure():
     # Create a mock residue table with the following topology:
     # side2 length 4, transmembrane helix length 5, side1 length 4, transmembrane helix length 6, side2 length 6.
@@ -119,10 +131,13 @@ def test_define_membrane_secondary_structure():
 
     expected_annotation = (['side2_1'] * 3 + ['TMD_1'] * 4 + ['side1_1'] * 6 +
                            ['TMD_2'] * 7 + ['side2_2'] * 5)
+    expected_category = (['side2'] * 3 + ['TMD'] * 4 + ['side1'] * 6 +
+                         ['TMD'] * 7 + ['side2'] * 5)
 
     output_df = define_membrane_secondary_structure(residue_table, ss_df)
 
     assert output_df['ss_domains'].tolist() == expected_annotation
+    assert output_df['ss_category'].tolist() == expected_category
 
 
 def test_define_soluble_secondary_structure():
@@ -136,6 +151,7 @@ def test_define_soluble_secondary_structure():
     # 'b2' should be merged into 'c1', 'c2' merged into 'c1'
     assert output_df['ss_group'].tolist() == ['a_1', 'a_1', 'b_1', 'b_1', 'a_2', 'a_2', 'a_2', 'c_1', 'c_1', 'c_1', 'c_1', 'c_1', 'c_1']
     assert output_df['ss_domains'].tolist() == ['alpha-helix_1', 'alpha-helix_1', 'beta-sheet_1', 'beta-sheet_1', 'alpha-helix_2', 'alpha-helix_2', 'alpha-helix_2', 'coil_1', 'coil_1', 'coil_1', 'coil_1', 'coil_1', 'coil_1']
+    assert output_df['ss_category'].tolist() == ['alpha-helix', 'alpha-helix', 'beta-sheet', 'beta-sheet', 'alpha-helix', 'alpha-helix', 'alpha-helix', 'coil', 'coil', 'coil', 'coil', 'coil', 'coil']
 
 def test_define_soluble_secondary_structure_edge_cases():
     # a1 is first in the chain, shouldn't be merged. b_3 is last in the chain, shouldn't be merged. A_3 isn't sandwhiched between two secondary structure elements of the same type, so shouldn't be merged.
@@ -148,3 +164,4 @@ def test_define_soluble_secondary_structure_edge_cases():
 
     assert output_df['ss_group'].tolist() == ['a_1', 'b_1', 'b_1', 'a_2', 'a_2', 'a_2', 'c_1', 'c_1', 'c_1', 'c_1', 'c_1', 'a_3', 'b_3']
     assert output_df['ss_domains'].tolist() == ['alpha-helix_1', 'beta-sheet_1', 'beta-sheet_1', 'alpha-helix_2', 'alpha-helix_2', 'alpha-helix_2', 'coil_1', 'coil_1', 'coil_1', 'coil_1', 'coil_1', 'alpha-helix_3', 'beta-sheet_3']
+    assert output_df['ss_category'].tolist() == ['alpha-helix', 'beta-sheet', 'beta-sheet', 'alpha-helix', 'alpha-helix', 'alpha-helix', 'coil', 'coil', 'coil', 'coil', 'coil', 'alpha-helix', 'beta-sheet']

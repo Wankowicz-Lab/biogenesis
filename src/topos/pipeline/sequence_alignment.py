@@ -31,7 +31,7 @@ _LABEL_MUTATION = "mutation sequence"
 _LABEL_CONSTRUCT = "construct sequence"
 _MUTATION_INPUT_README_SECTION = "README.md#mutation-input-requirements"
 VALID_MUTATION_TYPES = frozenset({"missense", "synonymous", "stop", "deletion", "insertion"})
-_ANNOTATION_COLS = ("ss_domains", "ss_group", "pdbtm_region", "pdbtm_region_detailed")
+_ANNOTATION_COLS = ("ss_domains", "ss_category", "ss_group", "pdbtm_region", "pdbtm_region_detailed")
 
 
 def _assign_coverage_status(merged: pd.DataFrame) -> pd.Series:
@@ -527,10 +527,10 @@ def merge_mutation_scores(
         )
         merged_df = merged_df.merge(coord_annot, how="left", on=["resi_struct", "resn_struct"])
 
-    # Unmodeled construct residues have no DSSP assignment; label both SS columns explicitly.
+    # Unmodeled construct residues have no DSSP assignment; label SS columns explicitly.
     # Aggregation metrics exclude this label (see secondary_structure_features).
     unmodeled_mask = merged_df["modeled"].eq(False)
-    for col in ("ss_domains", "ss_group"):
+    for col in ("ss_domains", "ss_category", "ss_group"):
         if col not in merged_df.columns:
             merged_df[col] = pd.NA
         merged_df.loc[unmodeled_mask, col] = UNMODELED_SS_LABEL
@@ -569,6 +569,7 @@ def merge_mutation_scores(
         "resi_struct",
         "resn_struct",
         "ss_domains",
+        "ss_category",
         "ss_group",
         "type",
         "effect",
