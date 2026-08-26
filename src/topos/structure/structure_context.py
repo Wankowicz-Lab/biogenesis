@@ -37,13 +37,15 @@ def drop_duplicate_residue_keys(
     *,
     context: str,
 ) -> pd.DataFrame:
-    """Warn and drop rows when ``key_cols`` are non-unique (``keep='first'``).
+    """Warn and drop rows when ``key_cols`` are non-unique (``keep='last'``).
 
     Duplicate keys often come from PDB insertion codes that share ``resi``/``resn``
     within a chain and would otherwise cause many-to-many feature merges.
 
     Only rows with non-null values in every ``key_cols`` entry are considered;
     mutation-only scaffold rows that share a null ``resi_struct`` are left intact.
+    ``keep='last'`` matches packing / H-bond metrics that write colliding keys onto
+    the last residue-start row.
 
     Callers that pass a mutation-expanded scaffold should include ``resm`` in
     ``key_cols`` so one-row-per-substitution expansions are not treated as collisions.
@@ -68,13 +70,13 @@ def drop_duplicate_residue_keys(
     examples = complete.loc[dup_mask_complete, cols].drop_duplicates().head(5)
     warnings.warn(
         f"Duplicate residue keys in {context}: {n_rows} rows map to {n_unique} unique "
-        f"keys on {cols}. Dropping duplicates (keep='first'). This can indicate PDB "
+        f"keys on {cols}. Dropping duplicates (keep='last'). This can indicate PDB "
         f"insertion codes. Example keys:\n{examples.to_string(index=False)}",
         UserWarning,
         stacklevel=2,
     )
-    # Drop later complete duplicates; keep incomplete-key rows and the first of each key.
-    drop_idx = complete.index[complete.duplicated(subset=cols, keep="first")]
+    # Drop earlier complete duplicates; keep incomplete-key rows and the last of each key.
+    drop_idx = complete.index[complete.duplicated(subset=cols, keep="last")]
     return df.drop(index=drop_idx).reset_index(drop=True)
 
 

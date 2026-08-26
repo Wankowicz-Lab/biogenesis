@@ -41,7 +41,7 @@ def test_residue_table_altloc():
 
 
 def test_residue_table_warns_and_drops_duplicate_chain_resi_resn():
-    """Insertion-code collisions share (chain, resi, resn); warn then keep first."""
+    """Insertion-code collisions share (chain, resi, resn); warn then keep last."""
     # Fab-like case: same author resi/resn, distinct ins_code (100A vs 100E).
     r1 = _make_residue("SER", res_id=100, chain_id="H")
     r2 = _make_residue("SER", res_id=100, chain_id="H")
@@ -68,7 +68,7 @@ def test_drop_duplicate_residue_keys_no_warning_when_unique():
     assert len(out) == 2
 
 
-def test_drop_duplicate_residue_keys_keeps_first():
+def test_drop_duplicate_residue_keys_keeps_last():
     df = pd.DataFrame(
         {
             "chain": ["A", "A", "A"],
@@ -80,7 +80,7 @@ def test_drop_duplicate_residue_keys_keeps_first():
     with pytest.warns(UserWarning, match="Duplicate residue keys in test"):
         out = drop_duplicate_residue_keys(df, ["chain", "resi", "resn"], context="test")
     assert len(out) == 2
-    assert list(out["value"]) == [10, 30]
+    assert list(out["value"]) == [20, 30]
 
 
 def test_drop_duplicate_residue_keys_ignores_incomplete_keys():

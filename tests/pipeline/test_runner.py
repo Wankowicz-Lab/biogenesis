@@ -457,7 +457,7 @@ def test_runner__merge_features(tmp_path):
 
 
 def test_runner__merge_features_warns_and_drops_duplicate_metric_keys(tmp_path):
-    """Metric frames with duplicate structure keys should warn then keep first."""
+    """Metric frames with duplicate structure keys should warn then keep last."""
     myrunner = runner.Runner(
         pdb_id='8smv',
         name='test_merge_dup_keys',
@@ -488,9 +488,9 @@ def test_runner__merge_features_warns_and_drops_duplicate_metric_keys(tmp_path):
     with pytest.warns(UserWarning, match=r"_merge_features metric frame 0"):
         merged = myrunner._merge_features([metric], mutations=False)
 
-    # First colliding metric row is kept; merge does not inflate.
+    # Last colliding metric row is kept; merge does not inflate.
     assert 'feature1' in merged.columns
-    assert (merged.loc[merged['resi_struct'] == 1, 'feature1'] == 0.1).all()
+    assert (merged.loc[merged['resi_struct'] == 1, 'feature1'] == 0.2).all()
     assert len(merged) == len(residue_table.drop_duplicates())
 
 
