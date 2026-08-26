@@ -9,9 +9,9 @@ import pytest
 
 from topos.structure.structure_context import (
     download_alphafold_pdb,
+    drop_duplicate_residue_keys,
     load_structure,
     residue_table,
-    warn_if_duplicate_residue_keys,
 )
 from tests.test_utils import _make_chain, _make_residue, _write_mmcif_file
 
@@ -40,8 +40,8 @@ def test_residue_table_altloc():
     assert all(res_table['chain'] == 'A')
 
 
-def test_residue_table_warns_on_duplicate_chain_resi_resn():
-    """Insertion-code collisions share (chain, resi, resn) and should warn."""
+def test_residue_table_warns_and_drops_duplicate_chain_resi_resn():
+    """Insertion-code collisions share (chain, resi, resn); warn then keep first."""
     # Fab-like case: same author resi/resn, distinct ins_code (100A vs 100E).
     r1 = _make_residue("SER", res_id=100, chain_id="H")
     r2 = _make_residue("SER", res_id=100, chain_id="H")
@@ -53,18 +53,54 @@ def test_residue_table_warns_on_duplicate_chain_resi_resn():
     with pytest.warns(UserWarning, match="Duplicate residue keys in residue_table creation"):
         table = residue_table(arr)
 
-    assert len(table) == 2
-    assert table.duplicated(subset=["chain", "resi", "resn"]).any()
+    assert len(table) == 1
+    assert not table.duplicated(subset=["chain", "resi", "resn"]).any()
 
 
-def test_warn_if_duplicate_residue_keys_no_warning_when_unique():
+def test_drop_duplicate_residue_keys_no_warning_when_unique():
     df = pd.DataFrame(
         {"chain": ["A", "A"], "resi": [1, 2], "resn": ["ALA", "GLY"]}
     )
     with warnings.catch_warnings(record=True) as recorded:
         warnings.simplefilter("always")
-        warn_if_duplicate_residue_keys(df, ["chain", "resi", "resn"], context="test")
+        out = drop_duplicate_residue_keys(df, ["chain", "resi", "resn"], context="test")
     assert not any(issubclass(w.category, UserWarning) for w in recorded)
+    assert len(out) == 2
+
+
+def test_drop_duplicate_residue_keys_keeps_first():
+    df = pd.DataFrame(
+        {
+            "chain": ["A", "A", "A"],
+            "resi": [1, 1, 2],
+            "resn": ["ALA", "ALA", "GLY"],
+            "value": [10, 20, 30],
+        }
+    )
+    with pytest.warns(UserWarning, match="Duplicate residue keys in test"):
+        out = drop_duplicate_residue_keys(df, ["chain", "resi", "resn"], context="test")
+    assert len(out) == 2
+    assert list(out["value"]) == [10, 30]
+
+
+def test_drop_duplicate_residue_keys_ignores_incomplete_keys():
+    """Null structure keys on mutation-only rows must not collapse distinct positions."""
+    df = pd.DataFrame(
+        {
+            "chain": ["A", "A", "A"],
+            "resi_struct": [pd.NA, pd.NA, 10],
+            "resn_struct": ["ASP", "ASP", "ALA"],
+            "resm": ["ALA", "ALA", "GLY"],
+            "resi_mut": [2, 3, 10],
+        }
+    )
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        out = drop_duplicate_residue_keys(
+            df, ["chain", "resi_struct", "resn_struct", "resm"], context="test"
+        )
+    assert not any(issubclass(w.category, UserWarning) for w in recorded)
+    assert len(out) == 3
 
 
 def test_load_structure_from_pdb_id():
