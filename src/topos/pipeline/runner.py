@@ -455,10 +455,14 @@ class Runner:
         # Add mutation columns if mutations are present
         keep_cols += ['resm'] if mutations else []
 
-        # Warn before collapsing scaffold duplicates so insertion-code collisions are visible.
+        # Scaffold rows are one-per-resm when mutations are present; include resm so
+        # ordinary DMS expansions are not reported as insertion-code collisions.
+        scaffold_key_cols = [c for c in STRUCTURE_FEATURE_KEY_COLS if c in keep_cols]
+        if "resm" in keep_cols:
+            scaffold_key_cols.append("resm")
         warn_if_duplicate_residue_keys(
             self.context.residue_table[keep_cols],
-            [c for c in STRUCTURE_FEATURE_KEY_COLS if c in keep_cols],
+            scaffold_key_cols,
             context="_merge_features residue_table scaffold",
         )
         merged_df = self.context.residue_table[keep_cols].drop_duplicates().reset_index(drop=True)

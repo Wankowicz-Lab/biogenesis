@@ -41,6 +41,9 @@ def warn_if_duplicate_residue_keys(
 
     Duplicate keys often come from PDB insertion codes that share ``resi``/``resn``
     within a chain. Silent deduplication would discard real residues; warn instead.
+
+    Callers that pass a mutation-expanded scaffold should include ``resm`` in
+    ``key_cols`` so one-row-per-substitution expansions are not treated as collisions.
     """
     cols = list(key_cols)
     if df.empty or any(c not in df.columns for c in cols):
