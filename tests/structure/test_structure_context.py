@@ -1,10 +1,19 @@
 """Tests for structure loading utilities."""
 
+import warnings
+
+import biotite.structure as struc
 import numpy as np
+import pandas as pd
 import pytest
 
-from topos.structure.structure_context import download_alphafold_pdb, load_structure, residue_table
-from tests.test_utils import _make_chain, _write_mmcif_file
+from topos.structure.structure_context import (
+    download_alphafold_pdb,
+    load_structure,
+    residue_table,
+    warn_if_duplicate_residue_keys,
+)
+from tests.test_utils import _make_chain, _make_residue, _write_mmcif_file
 
 
 def test_residue_table_altloc():
@@ -29,6 +38,33 @@ def test_residue_table_altloc():
     assert list(res_table['resn']) == ['ALA', 'CYS', 'ASP', 'GLU']
     assert list(res_table['resi']) == [1, 2, 3, 4]
     assert all(res_table['chain'] == 'A')
+
+
+def test_residue_table_warns_on_duplicate_chain_resi_resn():
+    """Insertion-code collisions share (chain, resi, resn) and should warn."""
+    # Fab-like case: same author resi/resn, distinct ins_code (100A vs 100E).
+    r1 = _make_residue("SER", res_id=100, chain_id="H")
+    r2 = _make_residue("SER", res_id=100, chain_id="H")
+    r2.coord = r2.coord + np.array([10.0, 0.0, 0.0])
+    r1.ins_code[:] = "A"
+    r2.ins_code[:] = "E"
+    arr = struc.concatenate([r1, r2])
+
+    with pytest.warns(UserWarning, match="Duplicate residue keys in residue_table creation"):
+        table = residue_table(arr)
+
+    assert len(table) == 2
+    assert table.duplicated(subset=["chain", "resi", "resn"]).any()
+
+
+def test_warn_if_duplicate_residue_keys_no_warning_when_unique():
+    df = pd.DataFrame(
+        {"chain": ["A", "A"], "resi": [1, 2], "resn": ["ALA", "GLY"]}
+    )
+    with warnings.catch_warnings(record=True) as recorded:
+        warnings.simplefilter("always")
+        warn_if_duplicate_residue_keys(df, ["chain", "resi", "resn"], context="test")
+    assert not any(issubclass(w.category, UserWarning) for w in recorded)
 
 
 def test_load_structure_from_pdb_id():

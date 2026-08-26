@@ -31,7 +31,11 @@ from topos.structure.secondary_structure import (
     get_secondary_structure_annotations,
 )
 from topos.structure.construct_coverage import build_construct_residue_table
-from topos.structure.structure_context import load_structure
+from topos.structure.structure_context import (
+    STRUCTURE_FEATURE_KEY_COLS,
+    load_structure,
+    warn_if_duplicate_residue_keys,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -451,6 +455,12 @@ class Runner:
         # Add mutation columns if mutations are present
         keep_cols += ['resm'] if mutations else []
 
+        # Warn before collapsing scaffold duplicates so insertion-code collisions are visible.
+        warn_if_duplicate_residue_keys(
+            self.context.residue_table[keep_cols],
+            [c for c in STRUCTURE_FEATURE_KEY_COLS if c in keep_cols],
+            context="_merge_features residue_table scaffold",
+        )
         merged_df = self.context.residue_table[keep_cols].drop_duplicates().reset_index(drop=True)
 
         # Filter merged_df to only include structural_feature_chains if specified
@@ -461,7 +471,7 @@ class Runner:
                 merged_df['chain'].isin(self.context.config.structural_feature_chains)
             ].reset_index(drop=True)
 
-        for df in dfs:
+        for i, df in enumerate(dfs):
             # Determine merge columns based on what's available in the df
             merge_cols = ['chain']
 
@@ -473,6 +483,11 @@ class Runner:
             elif 'resi_struct' in df.columns:
                 merge_cols.extend(['resi_struct', 'resn_struct'])
 
+            warn_if_duplicate_residue_keys(
+                df,
+                merge_cols,
+                context=f"_merge_features metric frame {i}",
+            )
             merged_df = pd.merge(merged_df, df, on=merge_cols, how='left')
 
         # Sort using the same logic as residue_table
