@@ -66,7 +66,7 @@ _PALETTE = [
 _ID_COLS = frozenset(
     {
         "chain", "resi_struct", "resn_struct", "resi_mut", "resn_mut",
-        "name", "ss_domains", "ss_group", "struct_info", "mut_info",
+        "name", "ss_domains", "ss_category", "ss_group", "struct_info", "mut_info",
     }
 )
 

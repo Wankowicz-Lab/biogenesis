@@ -463,6 +463,7 @@ def test_merge_mutation_scores_unmodeled_and_mismatch():
         'resn': ['ALA', 'CYS', 'GLU'],
         'ss_group': ['helix', 'helix', 'helix'],
         'ss_domains': ['helix_1', 'helix_1', 'helix_1'],
+        'ss_category': ['helix', 'helix', 'helix'],
     })
     construct_table = pd.DataFrame({
         'chain': ['A'] * 4,
@@ -492,10 +493,12 @@ def test_merge_mutation_scores_unmodeled_and_mismatch():
     assert not unmodeled_rows['struct_info'].any()
     assert (unmodeled_rows['coverage_status'] == 'unmodeled').all()
     assert (unmodeled_rows['ss_domains'] == 'unmodeled').all()
+    assert (unmodeled_rows['ss_category'] == 'unmodeled').all()
     assert (unmodeled_rows['ss_group'] == 'unmodeled').all()
     # Modeled rows keep coordinate SS labels
     modeled_rows = merged_df[(merged_df['resi_mut'] == 1) & merged_df['mut_info']]
     assert (modeled_rows['ss_domains'] == 'helix_1').all()
+    assert (modeled_rows['ss_category'] == 'helix').all()
 
 
 def test_merge_mutation_scores_missing_scheme_chain_raises():

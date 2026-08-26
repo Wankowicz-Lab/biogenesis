@@ -45,6 +45,23 @@ def make_contiguous_group_labels(lst: List[str]) -> List[str]:
     return result
 
 
+def ss_domains_to_category(labels: pd.Series) -> pd.Series:
+    """Strip trailing ``_N`` unique indices from ss_domains labels.
+
+    Labels without a numeric suffix (e.g. ``unmodeled``) are returned unchanged.
+    """
+    def _one(label: Any) -> Any:
+        if pd.isna(label):
+            return pd.NA
+        text = str(label)
+        head, sep, tail = text.rpartition("_")
+        if sep and tail.isdigit():
+            return head
+        return text
+
+    return labels.map(_one)
+
+
 def get_secondary_structure_annotations(context: Context) -> pd.DataFrame:
     """
     Get secondary structure annotations for an atom array.
@@ -261,7 +278,7 @@ def define_membrane_secondary_structure(residue_table: pd.DataFrame, ss_df: pd.D
     Returns
     -------
     annotated_df : pd.DataFrame
-        Input residue_table augmented with 'ss_group' and 'ss_domains' columns
+        Input residue_table augmented with 'ss_group', 'ss_domains', and 'ss_category' columns
     """
 
     residue_table = residue_table.copy()
@@ -318,6 +335,7 @@ def define_membrane_secondary_structure(residue_table: pd.DataFrame, ss_df: pd.D
             if np.sum(ss_mask) > 0:
                 residue_table.loc[ss_mask, 'ss_domains'] = region
 
+    residue_table['ss_category'] = ss_domains_to_category(residue_table['ss_domains'])
     return residue_table
 
 
@@ -338,7 +356,7 @@ def define_soluble_secondary_structure(residue_table: pd.DataFrame, ss_df: pd.Da
     Returns
     -------
     annotated_df : pd.DataFrame
-        Input residue_table augmented with 'ss_group' and 'ss_domains' columns
+        Input residue_table augmented with 'ss_group', 'ss_domains', and 'ss_category' columns
     """
     
     # Get secondary structure groups less than min_ss_length
@@ -366,6 +384,12 @@ def define_soluble_secondary_structure(residue_table: pd.DataFrame, ss_df: pd.Da
     ss_df['ss_domains'] = ss_df['ss_domains'].str.replace('a_', 'alpha-helix_')
     ss_df['ss_domains'] = ss_df['ss_domains'].str.replace('b_', 'beta-sheet_')
     ss_df['ss_domains'] = ss_df['ss_domains'].str.replace('c_', 'coil_')
+    ss_df['ss_category'] = ss_domains_to_category(ss_df['ss_domains'])
 
-    residue_table = pd.merge(residue_table, ss_df[['chain', 'resi', 'ss_group', 'ss_domains']], on=['chain', 'resi'], how='left')
+    residue_table = pd.merge(
+        residue_table,
+        ss_df[['chain', 'resi', 'ss_group', 'ss_domains', 'ss_category']],
+        on=['chain', 'resi'],
+        how='left',
+    )
     return residue_table    

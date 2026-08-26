@@ -624,6 +624,8 @@ def test_runner_run_metric(tmp_path):
             expected_cols.append('ss_group')
         if 'ss_domains' in myrunner.context.residue_table.columns:
             expected_cols.append('ss_domains')
+        if 'ss_category' in myrunner.context.residue_table.columns:
+            expected_cols.append('ss_category')
 
         if metric == 'aaindex_scores':
             for _, r in aaindex_data.iterrows():
