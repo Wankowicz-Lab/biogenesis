@@ -10,6 +10,7 @@ import warnings
 from pathlib import Path
 from typing import Tuple, Union
 
+import numpy as np
 import pandas as pd
 from Bio.Align import PairwiseAligner
 
@@ -21,14 +22,31 @@ from topos.sequence.utils import (
     convert_amino_acid_3to1,
     invalid_codes,
 )
+from topos.structure.construct_coverage import UNMODELED_SS_LABEL
 
 logger = logging.getLogger(__name__)
 
 # User-facing labels for alignment warnings (merged columns use resn_df1 / resn_df2 before rename).
 _LABEL_MUTATION = "mutation sequence"
-_LABEL_STRUCTURAL = "structural sequence"
+_LABEL_CONSTRUCT = "construct sequence"
 _MUTATION_INPUT_README_SECTION = "README.md#mutation-input-requirements"
 VALID_MUTATION_TYPES = frozenset({"missense", "synonymous", "stop", "deletion", "insertion"})
+_ANNOTATION_COLS = ("ss_domains", "ss_group", "pdbtm_region", "pdbtm_region_detailed")
+
+
+def _assign_coverage_status(merged: pd.DataFrame) -> pd.Series:
+    """Classify DMS-facing alignment rows into coverage_status labels."""
+    status = pd.Series(pd.NA, index=merged.index, dtype=object)
+    has_mut = merged["resn_mut"].notna()
+    has_construct = merged["resn_struct"].notna()
+    aa_match = has_mut & has_construct & (merged["resn_mut"] == merged["resn_struct"])
+    modeled = merged["modeled"].fillna(False).astype(bool)
+
+    status.loc[has_mut & ~has_construct] = "missing_from_construct"
+    status.loc[has_mut & has_construct & (merged["resn_mut"] != merged["resn_struct"])] = "construct_mismatch"
+    status.loc[aa_match & modeled] = "modeled"
+    status.loc[aa_match & ~modeled] = "unmodeled"
+    return status
 
 
 def _format_residue_ranges(positions: pd.Series) -> str:
@@ -273,26 +291,33 @@ def merge_sequence_dfs(df1: pd.DataFrame, df2: pd.DataFrame, mapping: list) -> p
 
 def evaluate_sequence_alignment(merged: pd.DataFrame, alignment_cutoff: float) -> None:
     """
-    Evaluate the quality of a sequence alignment by summarizing mismatches, indels, and gaps at termini.
+    Evaluate alignment quality and report construct vs coordinate coverage.
 
     Parameters
     ----------
     merged : pd.DataFrame
-        Merged DataFrame with columns resn_df1/resi_df1 (mutation sequence) and
-        resn_df2/resi_df2 (structural sequence).
+        Merged alignment with ``resn_df1``/``resi_df1`` (mutation), ``resn_df2``/
+        ``resi_df2`` (construct), and ``modeled`` (coordinates present).
     alignment_cutoff : float
         Quality cutoff for the alignment. If the proportion of alignment is below this cutoff,
         a warning is issued.
-
-    Returns
-    -------
-    None
-        Issues warnings for alignment quality metrics.
     """
     total_residues = len(merged)
-    mismatch_mask = (merged['resn_df1'].notna()) & (merged['resn_df2'].notna()) & (merged['resn_df1'] != merged['resn_df2'])
-    indel_mask = ((merged['resn_df1'].isna()) | (merged['resn_df2'].isna())).to_numpy()
-    termini_mask = [False] * total_residues
+    if total_residues == 0:
+        return
+
+    has_mut = merged["resn_df1"].notna()
+    has_construct = merged["resn_df2"].notna()
+    mismatch_mask = has_mut & has_construct & (merged["resn_df1"] != merged["resn_df2"])
+    # Unmodeled construct matches are not alignment errors (coordinates missing, sequence OK)
+    unmodeled_match = (
+        has_mut
+        & has_construct
+        & (merged["resn_df1"] == merged["resn_df2"])
+        & ~merged["modeled"].fillna(False).astype(bool)
+    )
+    indel_mask = ((merged["resn_df1"].isna()) | (merged["resn_df2"].isna())).to_numpy()
+    termini_mask = np.array([False] * total_residues)
 
     # Check for contiguous blocks of indels at beginning or end
     if indel_mask[0] or indel_mask[-1]:
@@ -308,117 +333,172 @@ def evaluate_sequence_alignment(merged: pd.DataFrame, alignment_cutoff: float) -
                 break
 
         # Exclude terminal gaps from indel count
-        indel_mask = indel_mask & (~pd.Series(termini_mask))
+        indel_mask = indel_mask & (~termini_mask)
 
-    # determine if alignment quality is below cutoff, excluding terminal gaps
-    error_mask = mismatch_mask | indel_mask
-    error_mask = error_mask[~pd.Series(termini_mask)]
+    # Error rate excludes terminal gaps and unmodeled-but-matched construct residues
+    exclude_from_errors = termini_mask | unmodeled_match.to_numpy()
+    error_mask = (mismatch_mask.to_numpy() | indel_mask) & (~exclude_from_errors)
+    scored = ~exclude_from_errors
+    n_scored = int(scored.sum())
 
     readme_hint = (
         " See the README section \"Sequence alignment\" for how warnings map to "
         "runner.context.extras['sequence_alignment_merged']."
     )
 
-    if (error_mask.sum() / len(error_mask)) > 1 - alignment_cutoff:
+    if n_scored and (error_mask.sum() / n_scored) > 1 - alignment_cutoff:
         warnings.warn(
             f"Alignment quality below cutoff of {alignment_cutoff:.2f}. "
-            f"Found {(error_mask.sum() / len(error_mask)) * 100:.2f}% errors "
-            f"({error_mask.sum()} out of {len(error_mask)} alignment positions) "
-            f"excluding terminal gaps.{readme_hint}"
+            f"Found {(error_mask.sum() / n_scored) * 100:.2f}% errors "
+            f"({error_mask.sum()} out of {n_scored} alignment positions) "
+            f"excluding terminal gaps and unmodeled construct matches.{readme_hint}"
         )
 
-    if mismatches := mismatch_mask.sum():
-        mut_pos = _format_residue_ranges(merged.loc[mismatch_mask, "resi_df1"])
-        struct_pos = _format_residue_ranges(merged.loc[mismatch_mask, "resi_df2"])
+    mut_only = has_mut
+    n_mut = int(mut_only.sum())
+    if n_mut:
+        aa_match = has_mut & has_construct & (merged["resn_df1"] == merged["resn_df2"])
+        has_coords = has_mut & has_construct & merged["modeled"].fillna(False).astype(bool)
+        construct_cov = float(aa_match.sum() / n_mut)
+        coord_cov = float(has_coords.sum() / n_mut)
         warnings.warn(
-            f"Found {mismatches} mismatches out of {total_residues} alignment positions "
+            f"Construct coverage: {construct_cov * 100:.2f}% of mutation wildtype positions "
+            f"match the construct sequence ({int(aa_match.sum())}/{n_mut}). "
+            f"Coordinate coverage: {coord_cov * 100:.2f}% align to a construct residue with "
+            f"deposited coordinates ({int(has_coords.sum())}/{n_mut})."
+        )
+
+    if mismatches := int(mismatch_mask.sum()):
+        mut_pos = _format_residue_ranges(merged.loc[mismatch_mask, "resi_df1"])
+        construct_pos = _format_residue_ranges(merged.loc[mismatch_mask, "resi_df2"])
+        warnings.warn(
+            f"Found {mismatches} construct mismatches out of {total_residues} alignment positions "
             f"({(mismatches / total_residues) * 100:.2f}%).\n"
             f"  {_LABEL_MUTATION.capitalize()} residue positions: {mut_pos}\n"
-            f"  {_LABEL_STRUCTURAL.capitalize()} residue positions: {struct_pos}"
+            f"  {_LABEL_CONSTRUCT.capitalize()} residue positions: {construct_pos}"
         )
 
-    if indels := indel_mask.sum():
+    if unmodeled := int(unmodeled_match.sum()):
+        mut_pos = _format_residue_ranges(merged.loc[unmodeled_match, "resi_df1"])
+        construct_pos = _format_residue_ranges(merged.loc[unmodeled_match, "resi_df2"])
+        warnings.warn(
+            f"Found {unmodeled} unmodeled construct residues out of {total_residues} "
+            f"alignment positions ({(unmodeled / total_residues) * 100:.2f}%). "
+            f"These match the deposited polymer but lack coordinates.\n"
+            f"  {_LABEL_MUTATION.capitalize()} residue positions: {mut_pos}\n"
+            f"  {_LABEL_CONSTRUCT.capitalize()} residue positions: {construct_pos}"
+        )
+
+    if indels := int(indel_mask.sum()):
         mut_pos = _format_residue_ranges(merged.loc[indel_mask, "resi_df1"])
-        struct_pos = _format_residue_ranges(merged.loc[indel_mask, "resi_df2"])
+        construct_pos = _format_residue_ranges(merged.loc[indel_mask, "resi_df2"])
         warnings.warn(
             f"Found {indels} alignment positions with internal indels out of {total_residues} "
-            f"({(indels / total_residues) * 100:.2f}%).\n"
+            f"({(indels / total_residues) * 100:.2f}%). "
+            f"Mutation-only gaps are missing_from_construct.\n"
             f"  {_LABEL_MUTATION.capitalize()} residue positions: {mut_pos}\n"
-            f"  {_LABEL_STRUCTURAL.capitalize()} residue positions: {struct_pos}"
+            f"  {_LABEL_CONSTRUCT.capitalize()} residue positions: {construct_pos}"
         )
 
-    if sum(termini_mask):
+    if termini_mask.any():
         tm = pd.Series(termini_mask)
         mut_pos = _format_residue_ranges(merged.loc[tm, "resi_df1"])
-        struct_pos = _format_residue_ranges(merged.loc[tm, "resi_df2"])
+        construct_pos = _format_residue_ranges(merged.loc[tm, "resi_df2"])
         warnings.warn(
             f"Found gaps at the termini of the sequence alignment.\n"
             f"  {_LABEL_MUTATION.capitalize()} residue positions: {mut_pos}\n"
-            f"  {_LABEL_STRUCTURAL.capitalize()} residue positions: {struct_pos}"
+            f"  {_LABEL_CONSTRUCT.capitalize()} residue positions: {construct_pos}"
         )
 
 
 def merge_mutation_scores(
     mutation_scores: pd.DataFrame,
     residue_table: pd.DataFrame,
+    construct_table: pd.DataFrame,
     chain: str,
     alignment_cutoff: float,
+    construct_source: str,
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Merge mutation scores with structural context based on residue positions.
+    Align mutation wildtype sequence to the construct residue table and merge.
 
     Parameters
     ----------
     mutation_scores : pd.DataFrame
-        DataFrame containing mutation scores with 'resi' and 'resn' columns.
+        Mutation scores with ``resi`` / ``resn``.
     residue_table : pd.DataFrame
-        DataFrame containing structural residue information with 'chain',
-        'resi', and 'resn' columns.
+        Coordinate residue table (annotations such as secondary structure).
+    construct_table : pd.DataFrame
+        Construct residues (``chain``, ``seq_id``, ``resi``, ``resn``, ``modeled``).
     chain : str
-        Chain identifier to filter structural context.
+        Chain used for DMS alignment.
     alignment_cutoff : float
-        Quality cutoff for the alignment. If the proportion of alignment is below this cutoff,
-        a warning is issued.
+        Alignment quality warning threshold.
+    construct_source : str
+        ``polymer_scheme`` or ``coordinates`` (from construct coverage builder).
 
     Returns
     -------
     tuple[pd.DataFrame, pd.DataFrame]
-        ``(residue_table, alignment_merged)`` where ``residue_table`` is the merged
-        output used by the pipeline, and ``alignment_merged`` is the aligned mutation/
-        structure wildtype mapping for the selected chain before mutation-row expansion.
+        ``(residue_table, alignment_merged)`` for the pipeline and per-column mapping.
     """
     aligner = PairwiseAligner()
 
     # Create copies to avoid modifying original DataFrames
     residue_table = residue_table.copy()
     mutation_scores = mutation_scores.copy()
+    construct_table = construct_table.copy()
 
-    # Subset residue table to the specified chain
-    residue_table_chain = residue_table[residue_table['chain'] == chain]
+    # Subset construct table to the specified chain (N-to-C polymer / seq_id order)
+    construct_chain = (
+        construct_table[construct_table["chain"] == chain]
+        .sort_values(["seq_id"], kind="mergesort")
+        .reset_index(drop=True)
+    )
+    if construct_chain.empty:
+        available = sorted(construct_table["chain"].unique().tolist())
+        if construct_source == "polymer_scheme":
+            raise ValueError(
+                f"mutation_data_chain '{chain}' not found in mmCIF polymer scheme chains "
+                f"{available}. The chain may be absent from the deposited construct."
+            )
+        raise ValueError(
+            f"mutation_data_chain '{chain}' not found in construct residue table chains {available}."
+        )
 
     # Subset mutation scores to only the wildtype sequence (N-to-C order, not CSV row order)
     mutation_scores_subset = (
-        mutation_scores[['resi', 'resn']]
+        mutation_scores[["resi", "resn"]]
         .drop_duplicates()
-        .sort_values(['resi', 'resn'], kind='mergesort')
+        .sort_values(["resi", "resn"], kind="mergesort")
         .reset_index(drop=True)
     )
 
     # Prepare sequences for alignment, a single string of single-letter amino acids
-    mut_seq_short = mutation_scores_subset['resn'].apply(lambda aa: convert_amino_acid_3to1(aa, force_convert=True))
+    mut_seq_short = mutation_scores_subset["resn"].apply(
+        lambda aa: convert_amino_acid_3to1(aa, force_convert=True)
+    )
     mut_seq = "".join(mut_seq_short.tolist())
-    res_seq_short = residue_table_chain['resn'].apply(lambda aa: convert_amino_acid_3to1(aa, force_convert=True))
-    res_seq = "".join(res_seq_short.tolist())
+    construct_seq_short = construct_chain["resn"].apply(
+        lambda aa: convert_amino_acid_3to1(aa, force_convert=True)
+    )
+    construct_seq = "".join(construct_seq_short.tolist())
 
-    # Perform alignment
-    logger.info("Performing sequence alignment")
-    alignment = aligner.align(mut_seq, res_seq)[0]
+    # Perform alignment (mutation wildtype → construct polymer / coordinate-fallback sequence)
+    logger.info("Performing sequence alignment to construct (source=%s)", construct_source)
+    alignment = aligner.align(mut_seq, construct_seq)[0]
 
     # Create mapping to link dataframes based on alignment
     index_map = alignment_to_index_map(alignment)
 
-    # Merge mutation scores and residue table based on alignment mapping
-    merged_df = merge_sequence_dfs(df1=mutation_scores_subset, df2=residue_table_chain, mapping=index_map)
+    # Merge mutation scores and construct table based on alignment mapping.
+    # Align against construct columns only; join coordinate annotations afterward.
+    construct_for_align = construct_chain[["resi", "resn", "seq_id", "modeled", "ins_code"]].copy()
+    merged_df = merge_sequence_dfs(
+        df1=mutation_scores_subset,
+        df2=construct_for_align,
+        mapping=index_map,
+    )
 
     # Evaluate alignment quality
     evaluate_sequence_alignment(merged=merged_df, alignment_cutoff=alignment_cutoff)
@@ -434,25 +514,72 @@ def merge_mutation_scores(
         },
         inplace=True,
     )
+    # merge_sequence_dfs leaves df2 non-key columns unprefixed (seq_id, modeled, ins_code)
+    merged_df["coverage_status"] = _assign_coverage_status(merged_df)
+
+    # Join SS / PDBTM annotations from coordinate residue table onto modeled rows
+    annot_cols = [c for c in _ANNOTATION_COLS if c in residue_table.columns]
+    if annot_cols:
+        coord_annot = (
+            residue_table.loc[residue_table["chain"] == chain, ["resi", "resn", *annot_cols]]
+            .drop_duplicates(subset=["resi", "resn"])
+            .rename(columns={"resi": "resi_struct", "resn": "resn_struct"})
+        )
+        merged_df = merged_df.merge(coord_annot, how="left", on=["resi_struct", "resn_struct"])
+
+    # Unmodeled construct residues have no DSSP assignment; label both SS columns explicitly.
+    # Aggregation metrics exclude this label (see secondary_structure_features).
+    unmodeled_mask = merged_df["modeled"].eq(False)
+    for col in ("ss_domains", "ss_group"):
+        if col not in merged_df.columns:
+            merged_df[col] = pd.NA
+        merged_df.loc[unmodeled_mask, col] = UNMODELED_SS_LABEL
+
     alignment_merged = merged_df.copy()
 
     # Add mutation information into merged_df
-    merged_df = merged_df.merge(mutation_scores, how='left', left_on=['resi_mut', 'resn_mut'], right_on=['resi', 'resn'])
-    
+    merged_df = merged_df.merge(
+        mutation_scores,
+        how="left",
+        left_on=["resi_mut", "resn_mut"],
+        right_on=["resi", "resn"],
+    )
     # Drop duplicate columns from the merge (resi and resn are duplicates of resi_mut and resn_mut)
-    merged_df.drop(columns=['resi', 'resn'], inplace=True, errors='ignore')
+    merged_df.drop(columns=["resi", "resn"], inplace=True, errors="ignore")
 
-    # Remove rows from mutation chain from residue table, update with merged rows
-    residue_table = residue_table[residue_table['chain'] != chain]
-    residue_table.rename(columns={'resn': 'resn_struct', 'resi': 'resi_struct'}, inplace=True)
-    residue_table = pd.concat([residue_table, merged_df], axis=0).reset_index(drop=True)
+    # Remove rows from mutation chain from residue table, update with merged construct-aligned rows.
+    # Non-target chains stay coordinate-only; target chain is replaced by the construct alignment.
+    other_chains = residue_table[residue_table["chain"] != chain].copy()
+    other_chains.rename(columns={"resn": "resn_struct", "resi": "resi_struct"}, inplace=True)
+    other_chains["modeled"] = True
+    other_chains["coverage_status"] = pd.NA
+    residue_table = pd.concat([other_chains, merged_df], axis=0).reset_index(drop=True)
 
-    # Determine which rows have sequence and structure info
-    residue_table['mut_info'] = ~residue_table['resn_mut'].isna()
-    residue_table['struct_info'] = ~residue_table['resn_struct'].isna()
+    # Determine which rows have mutation and structure (coordinate) info
+    residue_table["mut_info"] = ~residue_table["resn_mut"].isna()
+    # struct_info means coordinates present (not merely in the construct polymer)
+    residue_table["struct_info"] = residue_table["modeled"].fillna(False).astype(bool)
 
     # drop extra columns if present
-    keep_cols = ['chain', 'resi_mut', 'resn_mut', 'resm', 'resi_struct', 'resn_struct', 'ss_domains', 'ss_group', 'type', 'effect', 'mut_info', 'struct_info', 'align_pos']
-    residue_table = residue_table[keep_cols]
+    keep_cols = [
+        "chain",
+        "resi_mut",
+        "resn_mut",
+        "resm",
+        "resi_struct",
+        "resn_struct",
+        "ss_domains",
+        "ss_group",
+        "type",
+        "effect",
+        "mut_info",
+        "struct_info",
+        "modeled",
+        "coverage_status",
+        "align_pos",
+        "seq_id",
+    ]
+    keep_cols.extend([c for c in annot_cols if c in residue_table.columns and c not in keep_cols])
+    residue_table = residue_table[[c for c in keep_cols if c in residue_table.columns]]
 
     return residue_table, alignment_merged

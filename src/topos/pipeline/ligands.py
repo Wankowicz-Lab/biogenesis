@@ -109,8 +109,9 @@ def calculate_protein_ligand_interactions(
 ) -> pd.DataFrame:
     """Label residues as contact, binding site, or second shell for each ligand."""
     merge_cols = ["chain", "resi_struct", "resn_struct"]
+    # struct_info means coordinates present (not merely numbered in the construct)
     out = context.residue_table.loc[
-        context.residue_table.resi_struct.notna(), merge_cols
+        context.residue_table["struct_info"], merge_cols
     ].drop_duplicates(subset=merge_cols).reset_index(drop=True)
 
     arr = context.array

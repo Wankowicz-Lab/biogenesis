@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 from tempfile import NamedTemporaryFile, gettempdir
-from typing import Literal, Optional, Union
+from typing import Literal, Optional, Tuple, Union
 
 import biotite.structure as struc
 import numpy as np
@@ -53,7 +53,7 @@ def load_structure(
     uniprot_id: Optional[str] = None,
     model: Optional[int] = 1,
     altloc_policy: Literal["highest", "all"] = "highest",
-) -> struc.AtomArray:
+) -> Tuple[struc.AtomArray, Optional[CIFFile]]:
     """
     Load a protein structure from a PDB or mmCIF file, or fetch from RCSB by PDB ID.
 
@@ -74,9 +74,11 @@ def load_structure(
 
     Returns
     -------
-    struc.AtomArray
-        Loaded protein structure. The 'altloc' annotation contains the alternate
-        location identifier for each atom (empty string if no alternate location).
+    tuple[struc.AtomArray, CIFFile | None]
+        Loaded protein structure and the mmCIF file object when the source was
+        CIF/mmCIF (including RCSB ``pdb_id`` fetches); ``None`` for classic PDB.
+        The 'altloc' annotation contains the alternate location identifier for
+        each atom (empty string if no alternate location).
     """
     extra_fields = ["b_factor", "occupancy"]
     
@@ -106,15 +108,15 @@ def load_structure(
     if pdb_ext in ("cif", "mmcif"):
         cif = CIFFile.read(str(path))
         arr = get_structure(cif, model=model or 1, extra_fields=extra_fields, altloc=altloc_policy)
+        return arr, cif
+
+    pdb = PDBFile.read(str(path))
+    models = pdb.get_model_count()
+    if model is None and models > 1:
+        arr = pdb.get_structure(model=None, extra_fields=extra_fields, altloc=altloc_policy)
     else:
-        pdb = PDBFile.read(str(path))
-        models = pdb.get_model_count()
-        if model is None and models > 1:
-            arr = pdb.get_structure(model=None, extra_fields=extra_fields, altloc=altloc_policy)
-        else:
-            arr = pdb.get_structure(model=model or 1, extra_fields=extra_fields, altloc=altloc_policy)
-    
-    return arr
+        arr = pdb.get_structure(model=model or 1, extra_fields=extra_fields, altloc=altloc_policy)
+    return arr, None
 
 
 def download_alphafold_pdb(uniprot_id: str, out_dir: Optional[Union[str, Path]] = None) -> Path:

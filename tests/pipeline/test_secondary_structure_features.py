@@ -54,6 +54,15 @@ def _make_synthetic_ss_fixture(include_na_ss=False, metric_with_nan=False, aa_gr
     return residue_table, features
 
 
+def _with_ss_domains(out: pd.DataFrame, residue_table: pd.DataFrame) -> pd.DataFrame:
+    """Join catalog ss_domains from residue_table (not re-emitted by SS feature calc)."""
+    return out.merge(
+        residue_table[["chain", "resi_struct", "resn_struct", "ss_domains"]].drop_duplicates(),
+        on=["chain", "resi_struct", "resn_struct"],
+        how="left",
+    )
+
+
 def test_calculate_secondary_structure_features_columns_exist(tmp_path):
     """Each residue in a domain should receive the same SS-domain aggregate values."""
     config_path = tmp_path / "config.toml"
@@ -65,7 +74,7 @@ def test_calculate_secondary_structure_features_columns_exist(tmp_path):
     out = calculate_secondary_structure_features(myrunner.context, features)
 
     assert len(out) == len(residue_table)
-    assert "ss_domains" in out.columns
+    assert "ss_domains" not in out.columns
     assert "ss_domain_length" in out.columns
     assert "ss_domain_metric_a" in out.columns
 
@@ -111,9 +120,56 @@ def test_calculate_secondary_structure_features_na_ss_domains_excluded(tmp_path)
 
     out = calculate_secondary_structure_features(myrunner.context, features)
     assert len(out) == len(residue_table) - 1
-    assert "ss_domains" in out.columns
     assert "ss_domain_length" in out.columns
     assert "ss_domain_metric_a" in out.columns
+
+
+def test_calculate_secondary_structure_features_unmodeled_excluded_from_aggregates(tmp_path):
+    """unmodeled is kept as a catalog label but does not form an SS domain aggregate."""
+    config_path = tmp_path / "config.toml"
+    _make_config_file(config_path, mutation_data_chain="A", mutation_data_path="")
+    myrunner = Runner(config_path=config_path)
+    residue_table, features = _make_synthetic_ss_fixture()
+    residue_table = pd.concat(
+        [
+            residue_table,
+            pd.DataFrame({
+                "chain": ["A"],
+                "resi_struct": [7],
+                "resn_struct": ["GLY"],
+                "resi_mut": [7],
+                "resn_mut": ["GLY"],
+                "ss_domains": ["unmodeled"],
+            }),
+        ],
+        ignore_index=True,
+    )
+    features = pd.concat(
+        [
+            features,
+            pd.DataFrame({
+                "chain": ["A"],
+                "resi_struct": [7],
+                "resn_struct": ["GLY"],
+                "resi_mut": [7],
+                "resn_mut": ["GLY"],
+                "metric_a": [100.0],
+            }),
+        ],
+        ignore_index=True,
+    )
+    myrunner.context.residue_table = residue_table
+
+    out = _with_ss_domains(
+        calculate_secondary_structure_features(myrunner.context, features),
+        residue_table,
+    )
+    unmodeled = out[out["ss_domains"] == "unmodeled"]
+    assert len(unmodeled) == 1
+    assert pd.isna(unmodeled["ss_domain_length"].iloc[0])
+    assert pd.isna(unmodeled["ss_domain_metric_a"].iloc[0])
+    # Real domains still aggregate without the unmodeled residue
+    assert (out.loc[out["ss_domains"] == "alpha-helix_1", "ss_domain_length"] == 2).all()
 
 
 def test_calculate_secondary_structure_features_averages_mutation_rows_per_residue(tmp_path):
@@ -128,7 +184,10 @@ def test_calculate_secondary_structure_features_averages_mutation_rows_per_resid
     features = pd.concat([features, dup_row], ignore_index=True)
 
     myrunner.context.residue_table = residue_table
-    out = calculate_secondary_structure_features(myrunner.context, features)
+    out = _with_ss_domains(
+        calculate_secondary_structure_features(myrunner.context, features),
+        residue_table,
+    )
     alpha = out[out["ss_domains"] == "alpha-helix_1"]
 
     assert np.isclose(alpha["ss_domain_metric_a"].iloc[0], 3.5)

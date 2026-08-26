@@ -260,7 +260,8 @@ def test_evaluate_sequence_alignment():
         'resn_df1': ['A', 'K', 'N', 'D', 'A', 'A', 'A', 'A', 'I', 'M'],
         'resi_df1': list(range(1, 11)),
         'resn_df2': ['A', 'K', 'N', 'D', 'C', 'E', 'G', 'H', 'I', 'M'],
-        'resi_df2': list(range(1, 11))
+        'resi_df2': list(range(1, 11)),
+        'modeled': [True] * 10,
     })
     pd.options.mode.chained_assignment = 'raise'
 
@@ -269,44 +270,42 @@ def test_evaluate_sequence_alignment():
         # Call the function that should issue the warning
         evaluate_sequence_alignment(merged=threshold_merged_df, alignment_cutoff=0.8)
 
-        assert len(w) == 2 # poor alignment and mismatches
-        assert issubclass(w[-2].category, UserWarning)
-        assert "Alignment quality below cutoff of 0.80. Found 40.00%" in str(w[-2].message)
-        assert "Sequence alignment" in str(w[-2].message)
+        messages = [str(x.message) for x in w]
+        assert any("Alignment quality below cutoff of 0.80. Found 40.00%" in m for m in messages)
+        assert any("Construct coverage" in m for m in messages)
+        assert any("construct mismatches" in m for m in messages)
 
     # check that warning is raised for mismatched residues
     mismatch_merged_df = pd.DataFrame({
         'resn_df1': ['A', 'R', 'N', 'D', 'C', 'E'],
         'resi_df1': [1, 2, 3, 4, 5, 6],
         'resn_df2': ['A', 'K', 'N', 'D', 'C', 'E'],
-        'resi_df2': [3, 4, 5, 6, 7, 8]
+        'resi_df2': [3, 4, 5, 6, 7, 8],
+        'modeled': [True] * 6,
     })
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        # Call the function that should issue the warning
         evaluate_sequence_alignment(merged=mismatch_merged_df, alignment_cutoff=0.8)
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, UserWarning)
-        assert "Found 1 mismatches out of 6 alignment positions" in str(w[-1].message)
+        messages = [str(x.message) for x in w]
+        assert any("Found 1 construct mismatches out of 6 alignment positions" in m for m in messages)
 
     # check that warning is raised for indels
     indel_merged_df = pd.DataFrame({
         'resn_df1': ['A', 'G', 'R', 'N', 'D', 'C', 'E'],
         'resi_df1': [1, 2, 3, 4, 5, 6, 7],
         'resn_df2': ['A', None, 'R', 'N', None, 'C', 'E'],
-        'resi_df2': [3, 4, 5, 6, 7, 8, 9]
+        'resi_df2': [3, 4, 5, 6, 7, 8, 9],
+        'modeled': [True, False, True, True, False, True, True],
     })
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        # Call the function that should issue the warning
         evaluate_sequence_alignment(merged=indel_merged_df, alignment_cutoff=0.6)
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, UserWarning)
-        assert "Found 2 alignment positions with internal indels out of 7" in str(w[-1].message)
+        messages = [str(x.message) for x in w]
+        assert any("Found 2 alignment positions with internal indels out of 7" in m for m in messages)
 
 
     # check that warning is raised for terminal gaps, and that they don't count towards alignment quality
@@ -314,17 +313,45 @@ def test_evaluate_sequence_alignment():
         'resn_df1': ['A', 'R', 'N', 'D', 'C'],
         'resi_df1': [1, 2, 3, 4, 5],
         'resn_df2': [None, None, None, 'D', 'C'],
-        'resi_df2': [2, 3, 4, 5, 6]
+        'resi_df2': [2, 3, 4, 5, 6],
+        'modeled': [False, False, False, True, True],
     })
 
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
-        # Call the function that should issue the warning
         evaluate_sequence_alignment(merged=termini_merged_df, alignment_cutoff=0.9)
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, UserWarning)
-        assert "Found gaps at the termini of the sequence alignment" in str(w[-1].message)
+        messages = [str(x.message) for x in w]
+        assert any("Found gaps at the termini of the sequence alignment" in m for m in messages)
+
+
+def test_evaluate_coordinate_coverage_includes_modeled_mismatches():
+    """Coordinate coverage counts aligned construct residues with coords, even on AA mismatch."""
+    merged = pd.DataFrame({
+        "resn_df1": ["A", "R", "N", "D"],
+        "resi_df1": [1, 2, 3, 4],
+        "resn_df2": ["A", "K", "N", None],
+        "resi_df2": [10, 11, 12, None],
+        "modeled": [True, True, False, False],
+    })
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        evaluate_sequence_alignment(merged=merged, alignment_cutoff=0.5)
+        coverage_msgs = [str(x.message) for x in w if "Coordinate coverage" in str(x.message)]
+        assert len(coverage_msgs) == 1
+        # 2/4 have construct+coords (match at 1 and mismatch at 2); construct match is 2/4 (1 and 3)
+        assert "Coordinate coverage: 50.00%" in coverage_msgs[0]
+        assert "Construct coverage: 50.00%" in coverage_msgs[0]
+        assert "(2/4)" in coverage_msgs[0]
+
+
+def _construct_from_residue_table(residue_table: pd.DataFrame) -> pd.DataFrame:
+    """Coordinates-as-construct table for unit tests."""
+    df = residue_table[["chain", "resi", "resn"]].copy()
+    df["ins_code"] = ""
+    df["modeled"] = True
+    df["seq_id"] = df.groupby("chain", sort=False).cumcount() + 1
+    return df
 
 
 def test_merge_mutation_scores(tmp_path):
@@ -343,24 +370,32 @@ def test_merge_mutation_scores(tmp_path):
                                   'resn': ['LEU', 'THR', 'GLU', 'ASP', 'TYR'],
                                   'ss_group': ['TM1', 'TM1', 'TM1', 'TM1', 'TM1'],
                                   'ss_domains': ['TM1_start', 'TM1_mid', 'TM1_mid', 'TM1_end', 'TM1_start']})
+    construct_table = _construct_from_residue_table(residue_table)
 
     # Merge using the function
     with warnings.catch_warnings(record=True) as w:
         warnings.simplefilter("always")
         # Call the function that should issue the warning
-        merged_df, alignment_merged = merge_mutation_scores(mutation_scores=mutation_scores_df, residue_table=residue_table, chain='A',
-                                          alignment_cutoff=0.7)
+        merged_df, alignment_merged = merge_mutation_scores(
+            mutation_scores=mutation_scores_df,
+            residue_table=residue_table,
+            construct_table=construct_table,
+            chain='A',
+            alignment_cutoff=0.7,
+            construct_source='coordinates',
+        )
 
-        assert len(w) == 1
-        assert issubclass(w[-1].category, UserWarning)
-        assert "Found 1 mismatches out of 4 alignment positions" in str(w[-1].message)
+        messages = [str(x.message) for x in w]
+        assert any("Found 1 construct mismatches out of 4 alignment positions" in m for m in messages)
 
         assert len(merged_df) == 8 # 1 row for each mutant, plus 1 for residue in chain B
-        assert set(merged_df.columns) == {'resn_struct', 'resi_struct', 'resn_mut', 'resi_mut', 'resm', 'type',
-                                          'effect', 'chain', 'mut_info', 'struct_info', 'ss_group', 'ss_domains', 'align_pos'}
+        assert set(merged_df.columns) >= {'resn_struct', 'resi_struct', 'resn_mut', 'resi_mut', 'resm', 'type',
+                                          'effect', 'chain', 'mut_info', 'struct_info', 'ss_group', 'ss_domains',
+                                          'align_pos', 'modeled', 'coverage_status'}
         assert merged_df['mut_info'].tolist() == [False, True, True, True, True, True, True, True]
         assert merged_df['struct_info'].tolist() == [True, True, True, True, True, True, True, True]
-        assert set(alignment_merged.columns) >= {'chain', 'resi_mut', 'resn_mut', 'resi_struct', 'resn_struct', 'align_pos'}
+        assert set(alignment_merged.columns) >= {'chain', 'resi_mut', 'resn_mut', 'resi_struct', 'resn_struct',
+                                                 'align_pos', 'coverage_status', 'modeled'}
         assert len(alignment_merged) == 4
 
 
@@ -381,23 +416,28 @@ def test_merge_mutation_scores_row_order_invariant():
         'ss_group': ['TM1', 'TM1', 'TM1', 'TM1', 'TM1'],
         'ss_domains': ['TM1_start', 'TM1_mid', 'TM1_mid', 'TM1_end', 'TM1_start'],
     })
+    construct_table = _construct_from_residue_table(residue_table)
 
     merged_ordered, align_ordered = merge_mutation_scores(
         mutation_scores=mutation_scores_df,
         residue_table=residue_table.copy(),
+        construct_table=construct_table.copy(),
         chain='A',
         alignment_cutoff=0.7,
+        construct_source='coordinates',
     )
 
     shuffled = mutation_scores_df.sample(frac=1, random_state=0).reset_index(drop=True)
     merged_shuf, align_shuf = merge_mutation_scores(
         mutation_scores=shuffled,
         residue_table=residue_table.copy(),
+        construct_table=construct_table.copy(),
         chain='A',
         alignment_cutoff=0.7,
+        construct_source='coordinates',
     )
 
-    cmp_align = ['resi_mut', 'resn_mut', 'resi_struct', 'resn_struct', 'align_pos']
+    cmp_align = ['resi_mut', 'resn_mut', 'resi_struct', 'resn_struct', 'align_pos', 'coverage_status']
     pd.testing.assert_frame_equal(align_ordered[cmp_align], align_shuf[cmp_align])
 
     sort_keys = ['align_pos', 'resi_mut', 'resn_mut', 'resm', 'type', 'effect']
@@ -405,3 +445,88 @@ def test_merge_mutation_scores_row_order_invariant():
         merged_ordered.sort_values(sort_keys, kind='mergesort').reset_index(drop=True),
         merged_shuf.sort_values(sort_keys, kind='mergesort').reset_index(drop=True),
     )
+
+
+def test_merge_mutation_scores_unmodeled_and_mismatch():
+    """Polymer construct distinguishes unmodeled matches from AA mismatches."""
+    mutation_scores_df = pd.DataFrame({
+        'resn': ['ALA', 'CYS', 'ASP', 'GLU'],
+        'resi': [1, 2, 3, 4],
+        'resm': ['GLY', 'SER', 'ASN', 'GLN'],
+        'type': ['missense'] * 4,
+        'effect': [0.1, 0.2, 0.3, 0.4],
+    })
+    # Coordinate residue table only has modeled positions 1,2,4 (3 unmodeled)
+    residue_table = pd.DataFrame({
+        'chain': ['A', 'A', 'A'],
+        'resi': [1, 2, 4],
+        'resn': ['ALA', 'CYS', 'GLU'],
+        'ss_group': ['helix', 'helix', 'helix'],
+        'ss_domains': ['helix_1', 'helix_1', 'helix_1'],
+    })
+    construct_table = pd.DataFrame({
+        'chain': ['A'] * 4,
+        'seq_id': [1, 2, 3, 4],
+        'resi': [1, 2, 3, 4],
+        'ins_code': [''] * 4,
+        'resn': ['ALA', 'THR', 'ASP', 'GLU'],  # pos2 mismatch vs mut CYS
+        'modeled': [True, True, False, True],
+    })
+
+    merged_df, alignment_merged = merge_mutation_scores(
+        mutation_scores=mutation_scores_df,
+        residue_table=residue_table,
+        construct_table=construct_table,
+        chain='A',
+        alignment_cutoff=0.5,
+        construct_source='polymer_scheme',
+    )
+
+    by_resi = alignment_merged.set_index('resi_mut')['coverage_status'].to_dict()
+    assert by_resi[1] == 'modeled'
+    assert by_resi[2] == 'construct_mismatch'
+    assert by_resi[3] == 'unmodeled'
+    assert by_resi[4] == 'modeled'
+
+    unmodeled_rows = merged_df[(merged_df['resi_mut'] == 3) & merged_df['mut_info']]
+    assert not unmodeled_rows['struct_info'].any()
+    assert (unmodeled_rows['coverage_status'] == 'unmodeled').all()
+    assert (unmodeled_rows['ss_domains'] == 'unmodeled').all()
+    assert (unmodeled_rows['ss_group'] == 'unmodeled').all()
+    # Modeled rows keep coordinate SS labels
+    modeled_rows = merged_df[(merged_df['resi_mut'] == 1) & merged_df['mut_info']]
+    assert (modeled_rows['ss_domains'] == 'helix_1').all()
+
+
+def test_merge_mutation_scores_missing_scheme_chain_raises():
+    mutation_scores_df = pd.DataFrame({
+        'resn': ['ALA'],
+        'resi': [1],
+        'resm': ['GLY'],
+        'type': ['missense'],
+        'effect': [0.1],
+    })
+    residue_table = pd.DataFrame({
+        'chain': ['A'],
+        'resi': [1],
+        'resn': ['ALA'],
+        'ss_group': ['helix'],
+        'ss_domains': ['helix_1'],
+    })
+    construct_table = pd.DataFrame({
+        'chain': ['B'],
+        'seq_id': [1],
+        'resi': [1],
+        'ins_code': [''],
+        'resn': ['ALA'],
+        'modeled': [True],
+    })
+    with pytest.raises(ValueError, match="not found in mmCIF polymer scheme"):
+        merge_mutation_scores(
+            mutation_scores=mutation_scores_df,
+            residue_table=residue_table,
+            construct_table=construct_table,
+            chain='A',
+            alignment_cutoff=0.9,
+            construct_source='polymer_scheme',
+        )

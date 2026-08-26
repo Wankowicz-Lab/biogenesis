@@ -172,16 +172,24 @@ A CSV file with one row per mutation. Default required columns (names configurab
 
 Loader validation errors reference this section as `README.md#mutation-input-requirements`.
 
-The pipeline aligns the mutation data sequence to the PDB chain you specify via
-`mutation_data_chain`.  Alignment warnings (mismatches, gaps) are reported in the
-run log and as Python warnings — these are expected when the experimental construct
-differs from the deposited structure.
+The pipeline aligns the mutation wildtype sequence to the **PDB polymer construct**
+for `mutation_data_chain` when mmCIF polymer scheme data are available (including
+structures fetched by `pdb_id`). Alignment warnings (mismatches, gaps, unmodeled
+residues) are reported as Python warnings and summarized in the run log — these are
+expected when the experimental DMS construct differs from the deposited structure.
 
 ---
 
 ## Sequence alignment
 
-When `mutation_data_path` is set, the pipeline performs a pairwise alignment of the **mutation wildtype sequence** to the **PDB chain** given by `mutation_data_chain`. Each row of the resulting table is one **alignment column**: residues on the same row are paired; `NaN` on one side means a gap (insertion or deletion relative to the other sequence).
+When `mutation_data_path` is set, the pipeline performs a pairwise alignment of the **mutation wildtype sequence** to the **construct sequence** for `mutation_data_chain`.
+
+- **Deposited mmCIF** (local `.cif` / `.mmcif`, or `pdb_id` RCSB fetch): the construct comes from `_pdbx_poly_seq_scheme`. Residues in the polymer without coordinates are retained and labeled `unmodeled`.
+- **Classic PDB / AlphaFold PDB / CIF without a usable scheme:** the construct falls back to coordinate residues (`construct_source="coordinates"`). A warning is issued; `unmodeled` cannot appear because construct≡modeled chain.
+
+Each row of the alignment table is one **alignment column**: residues on the same row are paired; `NaN` on one side means a gap. `coverage_status` classifies mutation-side positions as `modeled`, `unmodeled`, `missing_from_construct`, or `construct_mismatch`. **Construct coverage** is the fraction of DMS wildtype positions that match the construct AA (`modeled` + `unmodeled`). **Coordinate coverage** is the fraction of DMS wildtype positions that align to a construct residue with coordinates (includes `construct_mismatch` when that residue is modeled). `struct_info` remains “has coordinates” (the `modeled` flag), so structure metrics stay gated correctly for unresolved loops.
+
+`runner.context.extras` also stores `construct_residue_table`, `construct_source`, `construct_coverage`, and `coordinate_coverage`.
 
 ### Accessing the alignment table
 
@@ -192,23 +200,25 @@ runner = Runner(config_path="...")
 alignment_df = runner.context.extras["sequence_alignment_merged"]
 ```
 
-The table includes `align_pos`, `chain`, `resi_mut`, `resn_mut`, `resi_struct`, and `resn_struct` (see also the [metadata CSV](#metadata-csv-prefix_metadatacsv) and [Output column reference](#output-column-reference)).
+The table includes `align_pos`, `chain`, `resi_mut`, `resn_mut`, `resi_struct`, `resn_struct`, `modeled`, and `coverage_status` (see also the [metadata CSV](#metadata-csv-prefix_metadatacsv) and [Output column reference](#output-column-reference)).
 
 ### Worked example
 
 **Row index** below is **0-based** (pandas `iloc`). **Residue numbers** in `resi_mut` / `resi_struct` are the numbering from each source. The table is a toy illustration, not a real protein.
 
-| Row index | align_pos | resi_mut | resn_mut | resi_struct | resn_struct | Notes |
-|-----------|-----------|----------|----------|-------------|-------------|--------|
-| 0 | 0 | 1 | ALA | 10 | ALA | Match |
-| 1 | 1 | 2 | ARG | 11 | LYS | **Mismatch** — same alignment row, different wildtype letters |
-| 2 | 2 | 3 | GLY | — | — | **Internal indel** — paired gap; positions depend on mapping |
-| 3 | 3 | — | — | 12 | ASN | **Internal indel** — residue only on structural side |
+| Row index | align_pos | resi_mut | resn_mut | resi_struct | resn_struct | coverage_status | Notes |
+|-----------|-----------|----------|----------|-------------|-------------|-----------------|--------|
+| 0 | 0 | 1 | ALA | 10 | ALA | modeled | Match with coordinates |
+| 1 | 1 | 2 | ARG | 11 | LYS | construct_mismatch | Same alignment row, different wildtype letters |
+| 2 | 2 | 3 | GLY | 12 | GLY | unmodeled | In construct polymer, no coordinates |
+| 3 | 3 | 4 | SER | — | — | missing_from_construct | DMS residue absent from construct |
+| 4 | 4 | — | — | 13 | ASN | — | Construct-only column (no DMS) |
 
-- **Mismatch:** At **row index 1**, `resn_mut` is ARG and `resn_struct` is LYS while both `resi_mut` and `resi_struct` are present. A mismatch warning lists **residue positions** (e.g. mutation sequence `2`, structural sequence `11`) as compact ranges, not per-row indices.
-- **Internal indel:** Rows where either `resn_mut` or `resn_struct` is missing (NaN) and the row is **not** classified as a terminal gap, e.g. **row index 3** with structure only.
-- **Terminal gap:** Rows at the **beginning** or **end** of the alignment where one sequence has no residue for the partner; these are called out in a separate warning and **excluded** from the alignment-quality error-rate.
-- **Alignment quality below cutoff:** Compares the count of mismatch + internal indel rows (excluding terminal gaps) to `alignment_cutoff`; see the warning text and cross-check against filtered rows in `alignment_df`.
+- **Construct mismatch:** Both sides present with different amino acids (engineered mutation, ortholog, isoform, etc.).
+- **Unmodeled:** AA matches the construct but lacks coordinates; excluded from the alignment-quality error rate (like terminal gaps).
+- **Missing from construct:** Gap on the construct side for a DMS position (truncation/deletion relative to the deposited polymer, or vs coordinates when `construct_source="coordinates"`).
+- **Terminal gap:** Contiguous gaps at the beginning or end of the alignment; excluded from the alignment-quality error rate.
+- **Alignment quality below cutoff:** Compares mismatch + internal indel rows (excluding terminal gaps and unmodeled matches) to `alignment_cutoff`.
 
 ---
 
@@ -232,10 +242,12 @@ Residue-level structural annotation table:
 | `resn_struct` | Residue name (3-letter code) from structure |
 | `resi_mut` | Residue number from mutation data (NaN if no alignment) |
 | `resn_mut` | Residue name from mutation data |
-| `struct_info` | `True` if this residue has structural data |
+| `struct_info` | `True` if this residue has coordinates (`modeled`) |
 | `mut_info` | `True` if this residue is covered by mutation data |
-| `ss_domains` | Secondary structure domain label (e.g. `helix_1`, `coil_3`) |
-| `ss_group` | Secondary structure class (`helix`, `sheet`, `coil`) |
+| `modeled` | `True` if coordinates are present for this construct residue |
+| `coverage_status` | DMS coverage class: `modeled`, `unmodeled`, `missing_from_construct`, `construct_mismatch` (NaN if no mutation residue on the row) |
+| `ss_domains` | Secondary structure domain label (e.g. `helix_1`, `coil_3`); `unmodeled` for construct residues without coordinates (excluded from SS-domain aggregations) |
+| `ss_group` | Secondary structure class (`helix`, `sheet`, `coil`); `unmodeled` when coordinates are absent |
 | `resm` | Mutant residue (only present when DMS data provided) |
 
 ### Run snapshot JSON (`{prefix}_run_log.json`)
@@ -307,7 +319,8 @@ It records:
 | `resn_mut` | Residue name from mutation data |
 | `resm` | Mutant residue token after loading, typically 3-letter for substitutions and unchanged for explicit indel shorthand tokens |
 | `name` | Run name (derived from PDB ID or the `name` parameter) |
-| `ss_domains` | Secondary structure domain label (e.g. `helix_1`, `sheet_2`, `coil_3`) |
+| `ss_domains` | Secondary structure domain label (e.g. `helix_1`, `sheet_2`, `coil_3`); `unmodeled` when coordinates are absent (excluded from SS-domain aggregations) |
+| `ss_group` | Secondary structure class; `unmodeled` when coordinates are absent |
 
 ### Structural metrics
 

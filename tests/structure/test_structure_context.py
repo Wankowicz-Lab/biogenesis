@@ -35,10 +35,11 @@ def test_load_structure_from_pdb_id():
     """Test loading structure from PDB ID by fetching from RCSB."""
     pdb_id = '8smv'
     
-    arr = load_structure(pdb_id=pdb_id)
+    arr, cif = load_structure(pdb_id=pdb_id)
     
     assert arr is not None
     assert arr.array_length() > 0
+    assert cif is not None
 
 
 def test_load_structure_pdb_format(tmp_path):
@@ -65,10 +66,11 @@ def test_load_structure_pdb_format(tmp_path):
         f.writelines(pdb_content)
     
     # Test loading PDB format
-    arr = load_structure(path=pdb_path)
+    arr, cif = load_structure(path=pdb_path)
     
     assert arr is not None
     assert arr.array_length() > 0
+    assert cif is None
 
 
 def test_load_structure_cif_format(tmp_path):
@@ -77,19 +79,20 @@ def test_load_structure_cif_format(tmp_path):
     cif_path = tmp_path / "test_structure.cif"
     _write_mmcif_file(file_path=cif_path, pdb_id="TEST", chains={"A": residues})
     
-    arr = load_structure(path=cif_path)
+    arr, cif = load_structure(path=cif_path)
     
     assert arr is not None
     assert arr.array_length() > 0
+    assert cif is not None
 
 
 def test_load_structure_altloc_policy():
     """Test loading structure with altloc policy."""
 
-    arr_altloc_all = load_structure(pdb_id='5C1M', altloc_policy='all')
+    arr_altloc_all, _ = load_structure(pdb_id='5C1M', altloc_policy='all')
     assert set(np.unique(arr_altloc_all.altloc_id)) == {'.', 'A', 'B'}
 
-    arr_altloc_highest = load_structure(pdb_id='5C1M', altloc_policy='highest')
+    arr_altloc_highest, _ = load_structure(pdb_id='5C1M', altloc_policy='highest')
     assert len(arr_altloc_highest) < len(arr_altloc_all)
 
 

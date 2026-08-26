@@ -7,18 +7,31 @@ from topos.metrics.averaging_metrics import (
 )
 from topos.metrics.secondary_structure import ss_domain_lengths, ss_domain_log2_aa_group_ratios
 from topos.pipeline.context import Context
+from topos.structure.construct_coverage import UNMODELED_SS_LABEL
+
+
+def _is_aggregatable_ss_domain(ss_domains: pd.Series) -> pd.Series:
+    """True for real SS domain labels (excludes missing and the unmodeled catalog label)."""
+    return ss_domains.notna() & (ss_domains != UNMODELED_SS_LABEL)
 
 
 def calculate_secondary_structure_features(
     context: Context,
     features: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Aggregate residue-level features onto secondary-structure domains."""
+    """Aggregate residue-level features onto secondary-structure domains.
+
+    Residues labeled ``unmodeled`` keep that catalog value in the output but are
+    excluded from domain length / composition aggregations.
+    """
     merge_cols = ["chain", "resi_struct", "resn_struct"]
 
     rt_subset = context.residue_table[merge_cols + ["ss_domains"]].drop_duplicates(merge_cols)
-    merged = pd.merge(features, rt_subset, on=merge_cols, how="left")
-    merged = merged.dropna(subset=["ss_domains"])
+    # Prefer residue_table labels; features may already carry ss_domains from the scaffold
+    feature_cols = [c for c in features.columns if c != "ss_domains"]
+    merged = pd.merge(features[feature_cols], rt_subset, on=merge_cols, how="left")
+    # Catalog label for missing coordinates is not a secondary-structure domain
+    merged = merged.loc[_is_aggregatable_ss_domain(merged["ss_domains"])].copy()
 
     cols_to_avg = [column for column in spatial_pool_metric_columns(features) if column in merged.columns]
     assert_poolable_numeric_columns(cols_to_avg, merged)
@@ -50,5 +63,8 @@ def calculate_secondary_structure_features(
     log2_df = ss_domain_log2_aa_group_ratios(residue_level)
     by_domain = by_domain.merge(log2_df, on=["chain", "ss_domains"], how="left")
 
-    rt_subset = rt_subset.dropna(subset=["ss_domains"])
-    return rt_subset.merge(by_domain, on=["chain", "ss_domains"], how="left")
+    # Keep unmodeled rows in the returned scaffold (label only; aggregate cols stay NaN)
+    rt_subset = rt_subset.loc[rt_subset["ss_domains"].notna()].copy()
+    out = rt_subset.merge(by_domain, on=["chain", "ss_domains"], how="left")
+    # ss_domains already lives on the features scaffold; avoid merge suffixes
+    return out.drop(columns=["ss_domains"])
